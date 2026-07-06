@@ -19,8 +19,9 @@
   const send = (payload) => {
     try {
       chrome.runtime.sendMessage({
-        type: 'cpc-cm-result',
+        type: 'cpc-scrape-result',
         jobId,
+        kind: 'cm',
         url: location.href.split('#')[0],
         ...payload,
       });
@@ -48,7 +49,7 @@
 
   const values = [];
   let currency = null;
-  let kind;
+  let pageKind;
 
   const collect = (money) => {
     if (!money) return;
@@ -58,7 +59,7 @@
 
   if (document.querySelector('.article-row')) {
     // Product page: each .article-row is one seller's offer for this card.
-    kind = 'product';
+    pageKind = 'product';
     for (const row of document.querySelectorAll('.article-row')) {
       const money = parseMoney(textOf(row, ['.price-container'])) || leafMoney(row);
       collect(money);
@@ -66,7 +67,7 @@
     }
   } else {
     // Search results: one row per product, with a "From" (lowest offer) price.
-    kind = 'search';
+    pageKind = 'search';
     let rows = [...document.querySelectorAll('#ProductsTable .table-body > div')];
     if (!rows.length) {
       const seen = new Set();
@@ -84,5 +85,5 @@
     }
   }
 
-  send({ values, currency, kind });
+  send({ values, currency, pageKind });
 })();

@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Card Price Check",
-  "version": "0.1.0",
-  "description": "Highlights eBay card listings that are significantly cheaper than the same card from Japan-located eBay sellers or on Cardmarket. Runs entirely in your browser.",
-  "permissions": ["storage", "offscreen"],
+  "version": "0.2.0",
+  "description": "Highlights underpriced card listings on eBay versus Japan-located sellers and Cardmarket, and periodically scans Carousell HK and Facebook Marketplace for new PSA-graded Japanese card deals. Runs entirely in your browser.",
+  "permissions": ["storage", "offscreen", "alarms", "notifications"],
   "host_permissions": [
     "https://www.ebay.com/*",
     "https://www.ebay.co.uk/*",
@@ -17,8 +17,19 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Card Price Check settings"
+    "default_title": "Card Price Check settings",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "options_page": "watches.html",
   "content_scripts": [
     {
       "matches": [
@@ -42,6 +53,20 @@
     {
       "matches": ["https://www.cardmarket.com/*"],
       "js": ["money.js", "cm-scraper.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.carousell.com.hk/*"],
+      "js": ["money.js", "carousell-scraper.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.facebook.com/marketplace/*",
+        "https://www.facebook.com/login*",
+        "https://www.facebook.com/checkpoint*"
+      ],
+      "js": ["money.js", "fbm-scraper.js"],
       "run_at": "document_idle"
     }
   ]

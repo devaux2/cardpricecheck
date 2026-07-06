@@ -5,9 +5,12 @@
 function normSymbol(raw) {
   const s = raw.replace(/\s+/g, '').toUpperCase();
   if (s === 'US$' || s === '$') return '$';
+  if (s === 'HK$' || s === 'HKD') return 'HK$';
   if (s === 'C$') return 'C$';
   if (s === 'AU$') return 'AU$';
   if (s === 'NZ$') return 'NZ$';
+  if (s === 'S$' || s === 'SGD') return 'S$';
+  if (s === 'NT$' || s === 'TWD') return 'NT$';
   if (s === 'EUR' || s === '€') return '€';
   if (s === 'JPY' || s === '¥') return '¥';
   if (s === 'GBP' || s === '£') return '£';
@@ -44,12 +47,14 @@ function parseMoney(text) {
   const t = String(text).replace(/ /g, ' ');
   let symbol = null;
   let amount = null;
-  const prefix = t.match(/(US\s?\$|AU\s?\$|C\s?\$|NZ\s?\$|EUR|JPY|£|\$|€|¥)\s*(\d[\d.,\s]*)/);
+  // The lookbehind keeps letter-prefixed symbols from firing mid-word
+  // ("CARDS $12" must be $, not S$; "PSA'S $50" must be $).
+  const prefix = t.match(/(?<![a-z'])(US\s?\$|HK\s?\$|AU\s?\$|C\s?\$|NZ\s?\$|NT\s?\$|S\s?\$|EUR|JPY|HKD|£|\$|€|¥)\s*(\d[\d.,\s]*)/i);
   if (prefix) {
     symbol = normSymbol(prefix[1]);
     amount = prefix[2];
   } else {
-    const suffix = t.match(/(\d[\d.,]*)\s*(EUR|JPY|£|\$|€|¥)/);
+    const suffix = t.match(/(\d[\d.,]*)\s*(EUR|JPY|HKD|£|\$|€|¥)/i);
     if (!suffix) return null;
     symbol = normSymbol(suffix[2]);
     amount = suffix[1];

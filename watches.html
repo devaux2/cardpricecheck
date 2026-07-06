@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Card Price Check — Watches &amp; deals</title>
+<link rel="stylesheet" href="watches.css">
+</head>
+<body>
+  <header>
+    <h1>Card Price Check</h1>
+    <nav class="tabs">
+      <button type="button" id="tabDeals" class="tab active">Deals</button>
+      <button type="button" id="tabWatches" class="tab">Watches</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ================================================================ -->
+    <!-- Deals tab                                                        -->
+    <!-- ================================================================ -->
+    <section id="pageDeals" class="page">
+      <div class="toolbar">
+        <button type="button" id="runNow" class="primary">Run checks now</button>
+        <button type="button" id="markSeen">Mark all seen</button>
+        <button type="button" id="clearDeals">Clear all</button>
+        <span id="runResult"></span>
+        <span class="toolbar-spacer"></span>
+        <select id="filterPlatform" title="Filter by platform">
+          <option value="">All platforms</option>
+          <option value="carousell">Carousell HK</option>
+          <option value="fbm">Facebook Marketplace</option>
+        </select>
+        <select id="filterWatch" title="Filter by watch">
+          <option value="">All watches</option>
+        </select>
+      </div>
+
+      <p id="statusLine" class="status-line"></p>
+      <div id="statusErrors"></div>
+
+      <div id="dealList"></div>
+      <p id="dealsEmpty" class="empty hidden"></p>
+    </section>
+
+    <!-- ================================================================ -->
+    <!-- Watches tab                                                      -->
+    <!-- ================================================================ -->
+    <section id="pageWatches" class="page hidden">
+      <h2>Your watches</h2>
+      <div id="watchList"></div>
+      <p id="watchesEmpty" class="empty hidden">No watches yet — add one below.</p>
+      <p class="hint">Editing a watch does not re-flag listings it already
+        skipped — delete and recreate the watch to reset its memory.</p>
+
+      <h2 id="formTitle">Add a watch</h2>
+      <form id="watchForm">
+        <label>Name <input type="text" id="wName" placeholder="(defaults to the query)"></label>
+        <label>Search query <input type="text" id="wQuery" required placeholder="e.g. pikachu ex sar"></label>
+
+        <fieldset>
+          <legend>Platforms</legend>
+          <label><input type="checkbox" id="wPlatCarousell" checked> Carousell HK</label>
+          <label><input type="checkbox" id="wPlatFbm" checked> Facebook Marketplace</label>
+        </fieldset>
+
+        <fieldset>
+          <legend>PSA grades</legend>
+          <div id="gradeRow" class="grade-row"></div>
+          <label><input type="checkbox" id="wAnyGrade"> Any grade (including ungraded)</label>
+        </fieldset>
+
+        <label><input type="checkbox" id="wJapaneseOnly" checked> Japanese cards only</label>
+
+        <fieldset>
+          <legend>Sets</legend>
+          <input type="search" id="setSearch" placeholder="Filter by code, name or Japanese name">
+          <div id="setChips" class="set-chips hidden"></div>
+          <div id="setList" class="set-list"></div>
+          <p class="hint">No selection = any set.</p>
+        </fieldset>
+
+        <fieldset>
+          <legend>Set release date</legend>
+          <label>From <input type="date" id="wFrom"></label>
+          <label>To <input type="date" id="wTo"></label>
+          <p class="hint">Filters by the set's Japanese release date, and only
+            applies when the listing title contains a recognisable set code or
+            name.</p>
+        </fieldset>
+
+        <label>Max price (HK$) <input type="number" id="wMaxPrice" min="0" step="any" placeholder="no limit"></label>
+        <label>Max listing age (days) <input type="number" id="wMaxAge" min="0" step="1" value="7">
+          <span class="hint-inline">0 = any age</span></label>
+
+        <div class="row">
+          <button type="submit" class="primary">Save watch</button>
+          <button type="button" id="cancelEdit">Cancel</button>
+        </div>
+      </form>
+
+      <h2>Settings</h2>
+      <fieldset>
+        <label>Check frequency
+          <select id="periodMinutes">
+            <option value="0">Manual only</option>
+            <option value="60">Every hour</option>
+            <option value="180">Every 3 hours</option>
+            <option value="360">Every 6 hours</option>
+            <option value="720">Every 12 hours</option>
+            <option value="1440">Once a day</option>
+          </select>
+        </label>
+        <label><input type="checkbox" id="notify"> Desktop notification when new deals are found</label>
+        <span id="settingsStatus"></span>
+        <p class="hint">Checks run only while Chrome is open.</p>
+      </fieldset>
+    </section>
+  </main>
+
+  <script src="sets.js"></script>
+  <script src="watches.js"></script>
+</body>
+</html>

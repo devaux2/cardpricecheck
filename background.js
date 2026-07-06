@@ -1,20 +1,39 @@
 // Card Price Check — background service worker.
 //
-// The price-lookup engine. Everything runs locally in the browser:
-//  - "jp" / "eb": eBay searches fetched directly by the service worker and
-//    parsed in an offscreen document (service workers have no DOMParser).
-//  - "cm": Cardmarket lookups run through a single hidden "side instance"
-//    tab, because Cardmarket sits behind Cloudflare and needs a real
-//    browser context. The tab is reused for the whole queue and closed
-//    after it has been idle for a while.
-// Each source has its own sequential queue with a polite delay between
-// requests, and every result is cached for a few hours.
+// Two engines, everything local to the browser:
+//
+// 1. On-page price comparison (content.js on eBay pages asks for it):
+//    - "jp" / "eb": eBay searches fetched directly by the service worker and
+//      parsed in an offscreen document (service workers have no DOMParser).
+//    - "cm": Cardmarket lookups run through the shared hidden worker tab.
+//
+// 2. Watches (periodic deal scanning of Carousell HK / Facebook Marketplace):
+//    chrome.alarms fires every few hours while the browser is open; each
+//    enabled watch's search runs through the same hidden worker tab, new
+//    listings are filtered (grade / Japanese / set / release date / price /
+//    age), deduplicated against what has been seen before, stored as deals,
+//    and surfaced via a notification and the action badge.
+//
+// The worker tab is a single reused background tab (a "side instance") —
+// needed because Cardmarket sits behind Cloudflare and Facebook requires the
+// user's own logged-in session. It closes after ~45s of inactivity. Each
+// source has its own pacing, and every result is cached where that is safe.
+
+importScripts('money.js', 'sets.js', 'watch-filters.js');
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const SOURCE_GAP_MS = { jp: 1500, eb: 1500, cm: 4000 };
+const WORKER_LANE_GAP_MS = 1000;
 const CM_JOB_TIMEOUT_MS = 30 * 1000;
-const CM_TAB_IDLE_CLOSE_MS = 45 * 1000;
-const SAMPLE_SIZE = 12; // stats use the cheapest N matches
+const WATCH_JOB_TIMEOUT_MS = 45 * 1000;
+const WORKER_TAB_IDLE_CLOSE_MS = 45 * 1000;
+const SAMPLE_SIZE = 12; // price stats use the cheapest N matches
+
+const WATCH_ALARM = 'cpcWatchAlarm';
+const WATCH_GAP_MS = 5000;
+const DEALS_CAP = 400;
+const SEEN_CAP = 2000;
+const DEFAULT_WATCH_SETTINGS = { periodMinutes: 360, notify: true };
 
 const EBAY_DOMAINS = new Set([
   'www.ebay.com', 'www.ebay.co.uk', 'www.ebay.de',
@@ -35,12 +54,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     handleCheck(msg).then(sendResponse, (e) => sendResponse({ ok: false, error: String(e) }));
     return true;
   }
-  if (msg.type === 'cpc-cm-result') {
-    onCmResult(sender, msg);
+  if (msg.type === 'cpc-scrape-result') {
+    onScrapeResult(sender, msg);
     return;
   }
+  if (msg.type === 'cpc-worker-poll') {
+    const isWorker = workerActive && sender.tab && sender.tab.id === workerTabId;
+    sendResponse(isWorker ? { jobId: workerActive.jobId, kind: workerActive.kind } : { jobId: null });
+    return;
+  }
+  if (msg.type === 'cpc-run-watches') {
+    runAllWatches().then(sendResponse, (e) => sendResponse({ ok: false, added: 0, error: String(e) }));
+    return true;
+  }
+  if (msg.type === 'cpc-mark-deals-seen') {
+    markDealsSeen().then(() => sendResponse({ ok: true }));
+    return true;
+  }
   if (msg.type === 'cpc-clear-cache') {
-    chrome.storage.local.clear().then(() => sendResponse({ ok: true }));
+    clearPriceCache().then(() => sendResponse({ ok: true }));
     return true;
   }
 });
@@ -76,7 +108,6 @@ async function pump(source) {
     await sleep(SOURCE_GAP_MS[source]);
   }
   pumping[source] = false;
-  if (source === 'cm') scheduleCmClose();
   updateKeepalive();
 }
 
@@ -150,89 +181,276 @@ async function parseInOffscreen(html) {
   return res;
 }
 
-// ---------------------------------------------------------- Cardmarket ----
+// ---------------------------------------------------- shared worker tab ----
+// One hidden background tab, reused for every scrape (Cardmarket, Carousell,
+// Facebook Marketplace). Jobs are serialised on a single lane; scraper
+// content scripts identify themselves via the #cpc-worker:<jobId> hash or,
+// on SPAs that strip the hash, by polling with 'cpc-worker-poll'.
 
-let cmTabId = null;
-let cmIdleTimer = null;
-let cmActive = null; // { resolve, timer, jobId }
-let cmJobSeq = 0;
+let workerTabId = null;
+let workerIdleTimer = null;
+let workerActive = null; // { resolve, timer, jobId, kind }
+let workerJobSeq = 0;
+let workerLane = Promise.resolve();
 
-function runCmJob(msg) {
-  const game = CM_GAMES.has(msg.game) ? msg.game : 'Pokemon';
-  const query = buildCmQuery(msg.query);
-  if (!query) return Promise.resolve({ ok: false, error: 'could not build a Cardmarket query from the title' });
-  const jobId = String(++cmJobSeq);
-  const cleanUrl = `https://www.cardmarket.com/en/${game}/Products/Search?searchString=${encodeURIComponent(query)}`;
-  // cpcw busts same-URL navigations so the page always reloads; the hash
-  // survives Cardmarket's redirect-to-product and correlates the result.
-  const url = `${cleanUrl}&cpcw=${jobId}#cpc-worker:${jobId}`;
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      finishCm({
-        ok: false, url: cleanUrl,
-        error: 'Cardmarket lookup timed out (slow load or bot check — open cardmarket.com once in a normal tab, then retry)',
-      });
-    }, CM_JOB_TIMEOUT_MS);
-    cmActive = { resolve, timer, jobId };
-    openCmTab(url).catch((e) => finishCm({ ok: false, error: String(e) }));
+function scrapeViaWorkerTab(url, kind, timeoutMs) {
+  const run = () => new Promise((resolve) => {
+    const jobId = String(++workerJobSeq);
+    // cpcw busts same-URL navigations so the page always reloads; the hash
+    // survives server redirects and correlates the result.
+    const target = `${url}${url.includes('?') ? '&' : '?'}cpcw=${jobId}#cpc-worker:${jobId}`;
+    const timer = setTimeout(() => finishWorker({ ok: false, error: 'timed out' }), timeoutMs);
+    workerActive = { resolve, timer, jobId, kind };
+    updateKeepalive();
+    openWorkerTab(target).catch((e) => finishWorker({ ok: false, error: String(e) }));
   });
+  const p = workerLane.then(run);
+  workerLane = p.catch(() => {}).then(() => sleep(WORKER_LANE_GAP_MS));
+  return p;
 }
 
-function finishCm(result) {
-  if (!cmActive) return;
-  clearTimeout(cmActive.timer);
-  const { resolve } = cmActive;
-  cmActive = null;
+function finishWorker(result) {
+  if (!workerActive) return;
+  clearTimeout(workerActive.timer);
+  const { resolve } = workerActive;
+  workerActive = null;
   resolve(result);
+  scheduleWorkerClose();
+  updateKeepalive();
 }
 
-async function openCmTab(url) {
-  clearTimeout(cmIdleTimer);
-  if (cmTabId !== null) {
+async function openWorkerTab(url) {
+  clearTimeout(workerIdleTimer);
+  if (workerTabId !== null) {
     try {
-      await chrome.tabs.update(cmTabId, { url });
+      await chrome.tabs.update(workerTabId, { url });
       return;
     } catch {
-      cmTabId = null; // tab was closed, fall through and recreate
+      workerTabId = null; // tab was closed, fall through and recreate
     }
   }
   const tab = await chrome.tabs.create({ url, active: false });
-  cmTabId = tab.id;
+  workerTabId = tab.id;
 }
 
-function onCmResult(sender, msg) {
-  if (!cmActive || !sender.tab || sender.tab.id !== cmTabId) return;
-  if (msg.jobId !== cmActive.jobId) return; // stale result from a previous, timed-out job
-  if (msg.blocked) {
-    finishCm({
-      ok: false, url: msg.url,
-      error: 'Cardmarket showed a bot check — open cardmarket.com in a normal tab, pass it, then retry',
-    });
-    return;
-  }
-  finishCm({
-    ok: true,
-    url: msg.url,
-    currency: msg.currency || '€',
-    kind: msg.kind,
-    ...computeStats(msg.values || []),
-  });
+function onScrapeResult(sender, msg) {
+  if (!workerActive || !sender.tab || sender.tab.id !== workerTabId) return;
+  if (msg.jobId !== workerActive.jobId) return; // stale result from a timed-out job
+  finishWorker({ ok: true, ...msg });
 }
 
-function scheduleCmClose() {
-  clearTimeout(cmIdleTimer);
-  cmIdleTimer = setTimeout(async () => {
-    if (queues.cm.length || cmActive || cmTabId === null) return;
-    try { await chrome.tabs.remove(cmTabId); } catch { /* already gone */ }
-    cmTabId = null;
-  }, CM_TAB_IDLE_CLOSE_MS);
+function scheduleWorkerClose() {
+  clearTimeout(workerIdleTimer);
+  workerIdleTimer = setTimeout(async () => {
+    if (workerActive || workerTabId === null) return;
+    try { await chrome.tabs.remove(workerTabId); } catch { /* already gone */ }
+    workerTabId = null;
+  }, WORKER_TAB_IDLE_CLOSE_MS);
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  if (tabId !== cmTabId) return;
-  cmTabId = null;
-  finishCm({ ok: false, error: 'worker tab was closed' });
+  if (tabId !== workerTabId) return;
+  workerTabId = null;
+  finishWorker({ ok: false, error: 'worker tab was closed' });
 });
+
+// ---------------------------------------------------------- Cardmarket ----
+
+async function runCmJob(msg) {
+  const game = CM_GAMES.has(msg.game) ? msg.game : 'Pokemon';
+  const query = buildCmQuery(msg.query);
+  if (!query) return { ok: false, error: 'could not build a Cardmarket query from the title' };
+  const cleanUrl = `https://www.cardmarket.com/en/${game}/Products/Search?searchString=${encodeURIComponent(query)}`;
+  const r = await scrapeViaWorkerTab(cleanUrl, 'cm', CM_JOB_TIMEOUT_MS);
+  if (!r.ok) {
+    const error = r.error === 'timed out'
+      ? 'Cardmarket lookup timed out (slow load or bot check — open cardmarket.com once in a normal tab, then retry)'
+      : r.error;
+    return { ok: false, error, url: cleanUrl };
+  }
+  if (r.blocked) {
+    return {
+      ok: false, url: r.url || cleanUrl,
+      error: 'Cardmarket showed a bot check — open cardmarket.com in a normal tab, pass it, then retry',
+    };
+  }
+  return {
+    ok: true,
+    url: r.url || cleanUrl,
+    currency: r.currency || '€',
+    kind: r.pageKind,
+    ...computeStats(r.values || []),
+  };
+}
+
+// -------------------------------------------------------------- watches ----
+
+let watchRunning = false;
+
+chrome.runtime.onInstalled.addListener(() => { setupWatchAlarm(); updateBadge(); });
+chrome.runtime.onStartup.addListener(() => { setupWatchAlarm(); updateBadge(); });
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'sync' && changes.cpcWatchSettings) setupWatchAlarm();
+  // The options page edits cpcDeals directly (e.g. "Clear all");
+  // keep the action badge in sync with the unseen count.
+  if (area === 'local' && changes.cpcDeals) updateBadge();
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === WATCH_ALARM) runAllWatches().catch(() => {});
+});
+
+chrome.notifications.onClicked.addListener(() => {
+  chrome.runtime.openOptionsPage();
+});
+
+async function getWatchSettings() {
+  const { cpcWatchSettings } = await chrome.storage.sync.get('cpcWatchSettings');
+  return { ...DEFAULT_WATCH_SETTINGS, ...(cpcWatchSettings || {}) };
+}
+
+async function setupWatchAlarm() {
+  const settings = await getWatchSettings();
+  await chrome.alarms.clear(WATCH_ALARM);
+  if (settings.periodMinutes > 0) {
+    chrome.alarms.create(WATCH_ALARM, {
+      periodInMinutes: Math.max(60, settings.periodMinutes),
+      delayInMinutes: 3,
+    });
+  }
+}
+
+async function runAllWatches() {
+  if (watchRunning) return { ok: false, added: 0, error: 'a check is already running' };
+  watchRunning = true;
+  updateKeepalive();
+  const status = { lastRun: Date.now(), running: true, platforms: {} };
+  await chrome.storage.local.set({ cpcWatchStatus: status });
+  const added = [];
+  const platformDead = {}; // stop hammering a platform that failed this run
+  try {
+    const { cpcWatches = [] } = await chrome.storage.local.get('cpcWatches');
+    const sets = typeof CPC_JP_SETS !== 'undefined' ? CPC_JP_SETS : [];
+    for (const watch of cpcWatches) {
+      if (!watch.enabled) continue;
+      for (const platform of ['carousell', 'fbm']) {
+        if (!watch.platforms || !watch.platforms[platform]) continue;
+        if (platformDead[platform]) continue;
+        const url = watchSearchUrl(platform, buildWatchQuery(watch));
+        let r;
+        try {
+          r = await scrapeViaWorkerTab(url, platform, WATCH_JOB_TIMEOUT_MS);
+        } catch (e) {
+          r = { ok: false, error: String(e) };
+        }
+        const stamp = { ok: false, error: null, at: Date.now() };
+        if (!r.ok) {
+          stamp.error = r.error || 'lookup failed';
+          platformDead[platform] = true;
+        } else if (r.loginRequired) {
+          stamp.error = 'Not logged in — open facebook.com in a normal tab, log in, then run again';
+          platformDead[platform] = true;
+        } else if (r.blocked) {
+          stamp.error = 'Blocked / bot check shown — open the site in a normal tab, then run again';
+          platformDead[platform] = true;
+        } else {
+          stamp.ok = true;
+          added.push(...await processListings(watch, platform, r.listings || [], sets));
+        }
+        status.platforms[platform] = stamp;
+        await chrome.storage.local.set({ cpcWatchStatus: status });
+        await sleep(WATCH_GAP_MS);
+      }
+    }
+    if (added.length) {
+      await recordDeals(added);
+      await notifyDeals(added.length);
+    }
+    await updateBadge();
+    return { ok: true, added: added.length };
+  } finally {
+    watchRunning = false;
+    status.running = false;
+    await chrome.storage.local.set({ cpcWatchStatus: status });
+    updateKeepalive();
+  }
+}
+
+async function processListings(watch, platform, listings, sets) {
+  const seenKey = `cpcSeen|${watch.id}|${platform}`;
+  const store = await chrome.storage.local.get(seenKey);
+  const seen = store[seenKey] || {};
+  const fresh = [];
+  const maxAge = watch.maxAgeDays == null ? 7 : watch.maxAgeDays;
+  for (const listing of listings) {
+    if (!listing || !listing.id || !listing.title) continue;
+    const localId = String(listing.id);
+    if (seen[localId]) continue;
+    seen[localId] = Date.now(); // evaluated once, never re-flagged
+    const days = parsePostedDays(listing.postedText);
+    if (maxAge > 0 && days != null && days > maxAge) continue;
+    const meta = filterListing(watch, listing, sets);
+    if (!meta) continue;
+    fresh.push({
+      id: `${platform}:${localId}`,
+      watchId: watch.id,
+      watchName: watch.name || watch.query,
+      platform,
+      title: listing.title,
+      price: meta.price,
+      currency: meta.currency,
+      url: listing.url,
+      image: listing.image || null,
+      postedText: listing.postedText || null,
+      grade: meta.grade,
+      setCode: meta.setCode,
+      setName: meta.setName,
+      foundAt: Date.now(),
+      seen: false,
+    });
+  }
+  // prune the oldest entries so the seen map doesn't grow forever
+  const ids = Object.keys(seen);
+  if (ids.length > SEEN_CAP) {
+    ids.sort((a, b) => seen[a] - seen[b]);
+    for (const id of ids.slice(0, ids.length - SEEN_CAP)) delete seen[id];
+  }
+  await chrome.storage.local.set({ [seenKey]: seen });
+  return fresh;
+}
+
+async function recordDeals(fresh) {
+  const { cpcDeals = [] } = await chrome.storage.local.get('cpcDeals');
+  const existing = new Set(cpcDeals.map((d) => d.id));
+  const merged = [...fresh.filter((d) => !existing.has(d.id)), ...cpcDeals].slice(0, DEALS_CAP);
+  await chrome.storage.local.set({ cpcDeals: merged });
+}
+
+async function notifyDeals(count) {
+  const settings = await getWatchSettings();
+  if (!settings.notify) return;
+  chrome.notifications.create('cpc-deals', {
+    type: 'basic',
+    iconUrl: 'icons/icon128.png',
+    title: 'Card Price Check',
+    message: `${count} new matching listing${count === 1 ? '' : 's'} found`,
+    priority: 1,
+  });
+}
+
+async function markDealsSeen() {
+  const { cpcDeals = [] } = await chrome.storage.local.get('cpcDeals');
+  await chrome.storage.local.set({ cpcDeals: cpcDeals.map((d) => ({ ...d, seen: true })) });
+  await updateBadge();
+}
+
+async function updateBadge() {
+  const { cpcDeals = [] } = await chrome.storage.local.get('cpcDeals');
+  const unseen = cpcDeals.filter((d) => !d.seen).length;
+  chrome.action.setBadgeText({ text: unseen ? String(unseen) : '' });
+  chrome.action.setBadgeBackgroundColor({ color: '#16a34a' });
+}
 
 // ------------------------------------------------------- query building ----
 
@@ -321,6 +539,14 @@ async function cacheSet(key, data) {
   } catch { /* storage full — lookups still work, just uncached */ }
 }
 
+// Only remove price-cache entries ('cpc|…'); watches, deals and seen-listing
+// memory also live in storage.local and must survive a cache clear.
+async function clearPriceCache() {
+  const all = await chrome.storage.local.get(null);
+  const keys = Object.keys(all).filter((k) => k.startsWith('cpc|'));
+  if (keys.length) await chrome.storage.local.remove(keys);
+}
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -332,7 +558,8 @@ let keepalive = null;
 function updateKeepalive() {
   const busy = Object.values(queues).some((q) => q.length)
     || Object.values(pumping).some(Boolean)
-    || !!cmActive;
+    || !!workerActive
+    || watchRunning;
   if (busy && !keepalive) {
     keepalive = setInterval(() => chrome.runtime.getPlatformInfo(() => {}), 25 * 1000);
   } else if (!busy && keepalive) {

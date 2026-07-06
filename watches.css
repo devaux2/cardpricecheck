@@ -1,0 +1,254 @@
+/* Card Price Check — "Watches & deals" page. Matches the popup's look:
+   system font stack, 13px, light theme, subtle borders, green accents. */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 20px 16px 40px;
+  font: 13px/1.5 -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  color: #222;
+  background: #fff;
+}
+
+header, main { max-width: 860px; margin: 0 auto; }
+
+h1 { font-size: 18px; margin: 0; }
+h2 { font-size: 15px; margin: 24px 0 8px; }
+
+.hidden { display: none !important; }
+
+input, select { accent-color: #16a34a; }
+
+/* ---------------------------------------------------------------- tabs ---- */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid #ddd;
+  margin: 12px 0 16px;
+}
+.tab {
+  padding: 6px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  font: inherit;
+  color: #555;
+  cursor: pointer;
+}
+.tab:hover { background: none; color: #222; }
+.tab.active { color: #16a34a; border-bottom-color: #16a34a; font-weight: 600; }
+
+/* ------------------------------------------------------------ controls ---- */
+
+button {
+  padding: 4px 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #f5f5f5;
+  font: inherit;
+  cursor: pointer;
+}
+button:hover { background: #eee; }
+button:disabled { opacity: 0.6; cursor: default; }
+button.primary { background: #16a34a; border-color: #15803d; color: #fff; }
+button.primary:hover:enabled { background: #15803d; }
+button.primary:disabled:hover { background: #16a34a; }
+button.danger { background: #fff; border-color: #fca5a5; color: #b91c1c; }
+button.danger:hover { background: #fef2f2; }
+
+select,
+input[type="text"],
+input[type="search"],
+input[type="number"],
+input[type="date"] {
+  font: inherit;
+  padding: 3px 6px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+}
+input[type="text"], input[type="search"] { width: 300px; max-width: 100%; }
+input[type="number"] { width: 90px; }
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.toolbar-spacer { flex: 1; }
+
+.spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-left: 6px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  vertical-align: -1px;
+  animation: cpc-spin 0.8s linear infinite;
+}
+@keyframes cpc-spin { to { transform: rotate(360deg); } }
+
+#runResult { font-size: 12px; }
+#runResult.ok { color: #15803d; }
+#runResult.err { color: #b91c1c; }
+
+.status-line { color: #777; font-size: 12px; margin: 0 0 10px; }
+.status-error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  color: #b91c1c;
+  padding: 8px 12px;
+  margin: 0 0 10px;
+}
+
+/* --------------------------------------------------------------- chips ---- */
+
+.chip {
+  display: inline-block;
+  padding: 0 8px;
+  border: 1px solid #ddd;
+  border-radius: 999px;
+  background: #f5f5f5;
+  color: #555;
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.chip-grade { background: #f0fdf4; border-color: #bbf7d0; color: #15803d; }
+.chip-set { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
+
+/* --------------------------------------------------------------- deals ---- */
+
+.deal {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #eee;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+.deal-unseen { background: #f0fdf4; border-color: #bbf7d0; }
+.deal-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #16a34a;
+  visibility: hidden;
+}
+.deal-unseen .deal-dot { visibility: visible; }
+.deal-thumb {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #f5f5f5;
+}
+.deal-thumb-empty { border: 1px solid #eee; }
+.deal-body { min-width: 0; }
+.deal-title a {
+  color: #222;
+  font-weight: 600;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.deal-title a:hover { color: #16a34a; text-decoration: underline; }
+.deal-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 12px;
+  color: #777;
+}
+.deal-price { font-weight: 600; font-size: 13px; color: #15803d; }
+
+.empty { color: #777; text-align: center; padding: 32px 0; }
+
+/* ------------------------------------------------------------- watches ---- */
+
+.watch {
+  border: 1px solid #eee;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.watch-disabled { opacity: 0.55; }
+.watch-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.watch-query { color: #777; font-size: 12px; overflow-wrap: anywhere; }
+.watch-controls { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.watch-toggle { color: #555; font-size: 12px; white-space: nowrap; }
+.watch-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+
+/* ---------------------------------------------------------------- form ---- */
+
+fieldset {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  margin: 10px 0;
+  padding: 6px 10px 8px;
+}
+legend { font-weight: 600; padding: 0 4px; }
+form label, fieldset label { display: block; margin: 6px 0; }
+
+.grade-row { display: flex; flex-wrap: wrap; gap: 2px 12px; margin: 4px 0; }
+.grade-row label { display: inline-flex; align-items: center; gap: 3px; margin: 0; }
+
+.set-list {
+  max-height: 190px;
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fff;
+  padding: 4px 8px;
+  margin-top: 6px;
+}
+.set-era {
+  color: #777;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin: 6px 0 2px;
+}
+.set-row { display: block; margin: 2px 0; }
+
+.set-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.set-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px 0 8px;
+  border: 1px solid #bbf7d0;
+  border-radius: 999px;
+  background: #f0fdf4;
+  color: #15803d;
+  font-size: 11px;
+  line-height: 18px;
+}
+.set-chip-x {
+  border: none;
+  background: none;
+  padding: 0 2px;
+  color: #15803d;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.set-chip-x:hover { background: none; color: #b91c1c; }
+
+.row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.hint { color: #777; font-size: 11px; margin: 8px 0 0; }
+.hint-inline { color: #777; font-size: 11px; }
+#settingsStatus { color: #15803d; font-size: 12px; }

@@ -47,6 +47,11 @@ for (const id of [...CHECKBOXES, ...NUMBERS, 'game']) {
   document.getElementById(id).addEventListener('change', save);
 }
 
+document.getElementById('openWatches').addEventListener('click', () => {
+  chrome.runtime.openOptionsPage();
+  window.close();
+});
+
 document.getElementById('clear').addEventListener('click', async () => {
   await chrome.runtime.sendMessage({ type: 'cpc-clear-cache' });
   flash('Cache cleared');
