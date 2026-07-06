@@ -53,6 +53,12 @@ document.getElementById('openWatches').addEventListener('click', () => {
   window.close();
 });
 
+// Reloads the unpacked extension from disk — the one-click alternative to
+// the ↻ button on chrome://extensions after a `git pull`.
+document.getElementById('reloadExt').addEventListener('click', () => {
+  chrome.runtime.reload();
+});
+
 document.getElementById('clear').addEventListener('click', async () => {
   await chrome.runtime.sendMessage({ type: 'cpc-clear-cache' });
   flash('Cache cleared');

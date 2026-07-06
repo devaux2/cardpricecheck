@@ -602,6 +602,14 @@ $('setSearch').addEventListener('input', applySetSearch);
 $('periodMinutes').addEventListener('change', saveSettings);
 $('notify').addEventListener('change', saveSettings);
 
+// Reloads the unpacked extension from disk (same as ↻ on chrome://extensions)
+// so a `git pull` takes effect without leaving this page. The page reloads
+// itself afterwards to run the fresh code.
+$('reloadExt').addEventListener('click', () => {
+  chrome.runtime.reload();
+  setTimeout(() => location.reload(), 500);
+});
+
 buildGradeRow();
 buildSetList();
 fillForm(null);
