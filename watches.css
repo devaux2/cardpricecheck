@@ -294,3 +294,49 @@ form label, fieldset label { display: block; margin: 6px 0; }
   color: #444;
   text-decoration: underline dotted;
 }
+
+/* -------------------------------------------------------- deals table ---- */
+
+#dealTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+#dealTable th {
+  text-align: left;
+  font-size: 12px;
+  color: #666;
+  border-bottom: 2px solid #ddd;
+  padding: 6px 8px;
+}
+
+#dealTable th.col-num,
+#dealTable td.col-num {
+  text-align: right;
+  white-space: nowrap;
+  width: 90px;
+}
+
+#dealTable td {
+  border-bottom: 1px solid #eee;
+  padding: 8px;
+  vertical-align: top;
+}
+
+#dealTable td.col-card {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  border-bottom: none;
+}
+
+#dealTable tr.deal { border-bottom: 1px solid #eee; }
+
+.deal-market-hkd {
+  color: #888;
+  font-size: 11px;
+}
+
+.diff { font-weight: 700; color: #555; }
+.diff-good { color: #15803d; }
+.diff-bad { color: #b91c1c; }

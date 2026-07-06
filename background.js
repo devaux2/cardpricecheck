@@ -25,7 +25,7 @@ const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const SOURCE_GAP_MS = { jp: 1500, eb: 1500, cm: 4000 };
 const WORKER_LANE_GAP_MS = 1000;
 const CM_JOB_TIMEOUT_MS = 30 * 1000;
-const WATCH_JOB_TIMEOUT_MS = 45 * 1000;
+const WATCH_JOB_TIMEOUT_MS = 75 * 1000; // hydration wait + scroll-loading
 // Must stay comfortably below the ~30s MV3 idle timeout: the keepalive runs
 // while the worker tab is open, so the close timer must fire before the
 // service worker is allowed to die, or the hidden tab would leak.
@@ -34,9 +34,11 @@ const SAMPLE_SIZE = 12; // price stats use the cheapest N matches
 
 const WATCH_ALARM = 'cpcWatchAlarm';
 const WATCH_GAP_MS = 5000;
-const DEALS_CAP = 400;
+const DEALS_CAP = 600;
 const SEEN_CAP = 2000;
-const DEFAULT_WATCH_SETTINGS = { periodMinutes: 360, notify: true };
+const DEFAULT_WATCH_SETTINGS = { periodMinutes: 360, notify: true, deepScan: true };
+const REF_TTL_MS = 24 * 60 * 60 * 1000; // re-price board entries daily
+const PRICE_BUDGET = 60;                // reference lookups per run (2 eBay queries each)
 
 const EBAY_DOMAINS = new Set([
   'www.ebay.com', 'www.ebay.co.uk', 'www.ebay.de',
@@ -205,7 +207,7 @@ let workerActive = null; // { resolve, timer, jobId, kind }
 let workerJobSeq = 0;
 let workerLane = Promise.resolve();
 
-function scrapeViaWorkerTab(url, kind, timeoutMs) {
+function scrapeViaWorkerTab(url, kind, timeoutMs, deep = false) {
   const run = () => new Promise((resolve) => {
     const jobId = String(++workerJobSeq);
     // cpcw busts same-URL navigations so the page always reloads; the hash
@@ -214,7 +216,7 @@ function scrapeViaWorkerTab(url, kind, timeoutMs) {
     const timer = setTimeout(() => finishWorker({ ok: false, error: 'timed out' }), timeoutMs);
     workerActive = { resolve, timer, jobId, kind };
     updateKeepalive();
-    openWorkerTab(target).catch((e) => finishWorker({ ok: false, error: String(e) }));
+    openWorkerTab(target, deep).catch((e) => finishWorker({ ok: false, error: String(e) }));
   });
   const p = workerLane.then(run);
   workerLane = p.catch(() => {}).then(() => sleep(WORKER_LANE_GAP_MS));
@@ -231,8 +233,18 @@ function finishWorker(result) {
   updateKeepalive();
 }
 
-async function openWorkerTab(url) {
+let workerTabIsDeep = false;
+
+async function openWorkerTab(url, deep) {
   clearTimeout(workerIdleTimer);
+  // Deep scans need a *rendered* worker (Chrome never renders hidden tabs,
+  // so infinite scroll cannot load more results there) — replace a hidden
+  // worker tab with a small unfocused window when depth is requested.
+  if (workerTabId !== null && deep && !workerTabIsDeep) {
+    const closing = workerTabId;
+    workerTabId = null;
+    try { await chrome.tabs.remove(closing); } catch { /* gone */ }
+  }
   if (workerTabId !== null) {
     try {
       await chrome.tabs.update(workerTabId, { url });
@@ -241,7 +253,17 @@ async function openWorkerTab(url) {
       workerTabId = null; // tab was closed, fall through and recreate
     }
   }
-  const tab = await chrome.tabs.create({ url, active: false });
+  let tab = null;
+  let createdDeep = false;
+  if (deep) {
+    try {
+      const win = await chrome.windows.create({ url, focused: false, width: 460, height: 900 });
+      tab = win.tabs && win.tabs[0];
+      createdDeep = !!tab;
+    } catch { /* window creation blocked — fall back to a hidden tab */ }
+  }
+  if (!tab) tab = await chrome.tabs.create({ url, active: false });
+  workerTabIsDeep = createdDeep;
   workerTabId = tab.id;
   // Remembered across service-worker restarts so a tab orphaned by a crash
   // or extension reload can be cleaned up on the next wake.
@@ -391,10 +413,12 @@ async function runAllWatches() {
   watchRunning = true;
   updateKeepalive();
   const status = { lastRun: Date.now(), running: true, platforms: {} };
-  const added = [];
+  const boards = []; // one full match-list per (watch, platform)
+  let freshTotal = 0;
   const platformDead = {}; // stop hammering a platform that failed this run
   try {
     await chrome.storage.local.set({ cpcWatchStatus: status });
+    const wsettings = await getWatchSettings();
     const { cpcWatches = [] } = await chrome.storage.local.get('cpcWatches');
     const sets = typeof CPC_JP_SETS !== 'undefined' ? CPC_JP_SETS : [];
     for (const watch of cpcWatches) {
@@ -405,7 +429,7 @@ async function runAllWatches() {
         const url = watchSearchUrl(platform, buildWatchQuery(watch), watch.maxAgeDays);
         let r;
         try {
-          r = await scrapeViaWorkerTab(url, platform, WATCH_JOB_TIMEOUT_MS);
+          r = await scrapeViaWorkerTab(url, platform, WATCH_JOB_TIMEOUT_MS, wsettings.deepScan !== false);
         } catch (e) {
           r = { ok: false, error: String(e) };
         }
@@ -422,26 +446,31 @@ async function runAllWatches() {
           platformDead[platform] = true;
         } else {
           stamp.ok = true;
-          added.push(...await processListings(watch, platform, r.listings || [], sets));
+          // A scrape that returns zero listings is indistinguishable from a
+          // silently broken scraper — keep the previous board for this group
+          // rather than wiping it. (Zero MATCHES after filtering is fine and
+          // does replace the group.)
+          if ((r.listings || []).length) {
+            const { matches, freshCount } = await processListings(watch, platform, r.listings, sets);
+            boards.push({ watchId: watch.id, platform, matches });
+            freshTotal += freshCount;
+          }
         }
         status.platforms[platform] = stamp;
         await chrome.storage.local.set({ cpcWatchStatus: status });
         await sleep(WATCH_GAP_MS);
       }
     }
-    if (added.length) {
-      // Rank every new deal against the market before recording it, so the
-      // feed can sort by "% below market". Lookups go through the normal
-      // cached, rate-limited eBay queues.
-      const { usdToHkd } = await chrome.storage.sync.get({ usdToHkd: 7.8 });
-      for (const deal of added) {
-        try { await priceReference(deal, usdToHkd); } catch { /* deal stays unranked */ }
-      }
-      await recordDeals(added);
-      await notifyDeals(added.length);
+    if (boards.length) {
+      // Rank the board against the market before recording it, so the feed
+      // can sort by "% below market". Lookups go through the normal cached,
+      // rate-limited eBay queues; references younger than a day are reused.
+      await enrichMatches(boards);
+      await upsertDeals(boards);
+      if (freshTotal) await notifyDeals(freshTotal);
     }
     await updateBadge();
-    return { ok: true, added: added.length };
+    return { ok: true, added: freshTotal };
   } finally {
     watchRunning = false;
     status.running = false;
@@ -450,23 +479,28 @@ async function runAllWatches() {
   }
 }
 
+// Evaluate EVERY scraped listing (the feed is a market board of what is
+// currently available, not an inbox); the seen map only decides which
+// matches count as genuinely new for the notification.
 async function processListings(watch, platform, listings, sets) {
   const seenKey = `cpcSeen|${watch.id}|${platform}`;
   const store = await chrome.storage.local.get(seenKey);
   const seen = store[seenKey] || {};
-  const fresh = [];
+  const matches = [];
+  let freshCount = 0;
   const maxAge = watch.maxAgeDays == null ? 7 : watch.maxAgeDays;
   for (const listing of listings) {
     if (!listing || !listing.id || !listing.title) continue;
     const localId = String(listing.id);
-    if (seen[localId]) continue;
-    seen[localId] = Date.now(); // evaluated once, never re-flagged
+    const isNew = !seen[localId];
+    if (isNew) seen[localId] = Date.now();
     const days = parsePostedDays(listing.postedText);
     if (maxAge > 0 && days != null && days > maxAge) continue;
     const meta = filterListing(watch, listing, sets);
     if (!meta) continue;
-    fresh.push({
-      id: `${platform}:${localId}`,
+    if (isNew) freshCount += 1;
+    matches.push({
+      id: `${watch.id}|${platform}:${localId}`,
       watchId: watch.id,
       watchName: watch.name || watch.query,
       platform,
@@ -491,7 +525,7 @@ async function processListings(watch, platform, listings, sets) {
     for (const id of ids.slice(0, ids.length - SEEN_CAP)) delete seen[id];
   }
   await chrome.storage.local.set({ [seenKey]: seen });
-  return fresh;
+  return { matches, freshCount };
 }
 
 // Attach the market reference to a deal: the cheaper of the Japan-located
@@ -508,6 +542,7 @@ async function priceReference(deal, usdToHkd) {
   deal.refUsd = best.median;
   deal.refHkd = best.median * usdToHkd;
   deal.refUrl = best.url;
+  deal.refAt = Date.now();
   // Carousell shows HK$; FBM in Hong Kong renders plain "$" but means HK$.
   if (deal.price && (deal.currency === 'HK$' || deal.currency === '$') && deal.refHkd > 0) {
     deal.discountPct = Math.round((1 - deal.price / deal.refHkd) * 100);
@@ -515,7 +550,7 @@ async function priceReference(deal, usdToHkd) {
 }
 
 // Serialise every read-modify-write of cpcDeals so a scheduled run's
-// recordDeals can't interleave with markDealsSeen and clobber fresh deals.
+// upsertDeals can't interleave with markDealsSeen and clobber fresh deals.
 let dealsLock = Promise.resolve();
 
 function withDealsLock(fn) {
@@ -524,12 +559,60 @@ function withDealsLock(fn) {
   return p;
 }
 
-function recordDeals(fresh) {
+// Price the board: carry references younger than REF_TTL_MS over from the
+// existing entry (recomputing the discount against the current listing
+// price), and run fresh eBay lookups for the rest within the budget.
+async function enrichMatches(boards) {
+  const { cpcDeals = [] } = await chrome.storage.local.get('cpcDeals');
+  const oldById = new Map(cpcDeals.map((d) => [d.id, d]));
+  const { usdToHkd } = await chrome.storage.sync.get({ usdToHkd: 7.8 });
+  const needPricing = [];
+  for (const board of boards) {
+    for (const m of board.matches) {
+      const old = oldById.get(m.id);
+      if (old && old.refUsd && old.refAt && Date.now() - old.refAt < REF_TTL_MS) {
+        m.refUsd = old.refUsd;
+        m.refHkd = old.refHkd;
+        m.refUrl = old.refUrl;
+        m.refAt = old.refAt;
+        if (m.price && (m.currency === 'HK$' || m.currency === '$') && m.refHkd > 0) {
+          m.discountPct = Math.round((1 - m.price / m.refHkd) * 100);
+        }
+      } else {
+        needPricing.push(m);
+      }
+    }
+  }
+  for (const m of needPricing.slice(0, PRICE_BUDGET)) {
+    try { await priceReference(m, usdToHkd); } catch { /* stays unranked */ }
+  }
+}
+
+// Replace each (watch, platform) group with its current full match list —
+// the feed mirrors what is available right now. First-seen time and the
+// user's seen flag carry over; groups that errored this run stay untouched.
+function upsertDeals(boards) {
   return withDealsLock(async () => {
     const { cpcDeals = [] } = await chrome.storage.local.get('cpcDeals');
-    const existing = new Set(cpcDeals.map((d) => d.id));
-    const merged = [...fresh.filter((d) => !existing.has(d.id)), ...cpcDeals].slice(0, DEALS_CAP);
-    await chrome.storage.local.set({ cpcDeals: merged });
+    const oldById = new Map(cpcDeals.map((d) => [d.id, d]));
+    const replaced = new Set(boards.map((b) => `${b.watchId}|${b.platform}`));
+    const now = Date.now();
+    const fresh = [];
+    for (const board of boards) {
+      for (const m of board.matches) {
+        const old = oldById.get(m.id);
+        fresh.push({
+          ...m,
+          foundAt: old ? old.foundAt : m.foundAt,
+          seen: old ? old.seen : false,
+          checkedAt: now,
+        });
+      }
+    }
+    const freshIds = new Set(fresh.map((d) => d.id));
+    const kept = cpcDeals.filter((d) =>
+      !freshIds.has(d.id) && !replaced.has(`${d.watchId}|${d.platform}`));
+    await chrome.storage.local.set({ cpcDeals: [...fresh, ...kept].slice(0, DEALS_CAP) });
   });
 }
 

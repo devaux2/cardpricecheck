@@ -13,7 +13,7 @@
 // filter then degrades to "any set" with a note in the picker.
 const SETS = typeof CPC_JP_SETS !== 'undefined' ? CPC_JP_SETS : [];
 
-const DEFAULT_WATCH_SETTINGS = { periodMinutes: 360, notify: true };
+const DEFAULT_WATCH_SETTINGS = { periodMinutes: 360, notify: true, deepScan: true };
 const DEFAULT_GRADES = [7, 8, 9];
 const PLATFORM_LABELS = { carousell: 'Carousell', fbm: 'FB Marketplace' };
 const ERA_LABELS = { vintage: 'Vintage', classic: 'Classic', modern: 'Modern' };
@@ -161,22 +161,24 @@ function renderWatchFilter() {
 }
 
 function dealRow(d) {
-  const row = el('div', d.seen ? 'deal' : 'deal deal-unseen');
+  const row = document.createElement('tr');
+  row.className = d.seen ? 'deal' : 'deal deal-unseen';
+
+  // --- card column: dot, thumbnail, title link, chips ---
+  const cardCell = el('td', 'col-card');
   const dot = el('span', 'deal-dot');
   if (!d.seen) dot.title = 'New since your last visit';
-  row.appendChild(dot);
-
+  cardCell.appendChild(dot);
   if (d.image && isHttp(d.image)) {
     const img = document.createElement('img');
     img.className = 'deal-thumb';
     img.src = d.image;
     img.alt = '';
     img.loading = 'lazy';
-    row.appendChild(img);
+    cardCell.appendChild(img);
   } else {
-    row.appendChild(el('div', 'deal-thumb deal-thumb-empty'));
+    cardCell.appendChild(el('div', 'deal-thumb deal-thumb-empty'));
   }
-
   const body = el('div', 'deal-body');
   const title = el('div', 'deal-title');
   const link = el('a', null, d.title || '(no title)');
@@ -184,9 +186,7 @@ function dealRow(d) {
   link.target = '_blank';
   link.rel = 'noopener';
   title.appendChild(link);
-
   const meta = el('div', 'deal-meta');
-  if (d.price != null) meta.appendChild(el('span', 'deal-price', fmtPrice(d.price, d.currency)));
   meta.appendChild(el('span', 'chip', PLATFORM_LABELS[d.platform] || d.platform));
   if (d.grade != null) meta.appendChild(el('span', 'chip chip-grade', `PSA ${d.grade}`));
   if (d.setCode) {
@@ -195,27 +195,49 @@ function dealRow(d) {
     meta.appendChild(chip);
   }
   if (d.era && ERA_LABELS[d.era]) meta.appendChild(el('span', 'chip', ERA_LABELS[d.era]));
+  if (d.watchName) meta.appendChild(el('span', null, `watch: ${d.watchName}`));
+  if (d.postedText) meta.appendChild(el('span', null, `listed ${d.postedText}`));
+  meta.appendChild(el('span', null, `found ${relTime(d.foundAt)}`));
+  body.append(title, meta);
+  cardCell.appendChild(body);
+  row.appendChild(cardCell);
+
+  // --- listing price column ---
+  const listingCell = el('td', 'col-num');
+  listingCell.textContent = d.price != null ? fmtPrice(d.price, d.currency) : '—';
+  row.appendChild(listingCell);
+
+  // --- target (benchmark) column: cheapest eBay reference, linked ---
+  const targetCell = el('td', 'col-num');
   if (d.refUsd != null) {
-    const market = el('a', 'deal-market',
-      `market ~$${d.refUsd.toFixed(0)}${d.refHkd ? ` ≈HK$${d.refHkd.toFixed(0)}` : ''}`);
+    const market = el('a', 'deal-market', `$${d.refUsd.toFixed(0)}`);
     if (isHttp(d.refUrl)) market.href = d.refUrl;
     market.target = '_blank';
     market.rel = 'noopener';
     market.title = 'Cheapest eBay reference (JP-located or worldwide) — click to verify';
-    meta.appendChild(market);
+    targetCell.appendChild(market);
+    if (d.refHkd) targetCell.appendChild(el('div', 'deal-market-hkd', `≈HK$${d.refHkd.toFixed(0)}`));
+  } else {
+    targetCell.textContent = '—';
   }
+  row.appendChild(targetCell);
+
+  // --- % diff column ---
+  const diffCell = el('td', 'col-num');
   if (d.discountPct != null) {
     const good = d.discountPct >= 15;
-    const chip = el('span', good ? 'chip chip-discount' : 'chip',
-      d.discountPct >= 0 ? `▼ ${d.discountPct}% vs market` : `▲ ${Math.abs(d.discountPct)}% over`);
-    meta.appendChild(chip);
+    const span = el('span',
+      d.discountPct >= 0 ? (good ? 'diff diff-good' : 'diff') : 'diff diff-bad',
+      d.discountPct >= 0 ? `▼ ${d.discountPct}%` : `▲ ${Math.abs(d.discountPct)}%`);
+    span.title = d.discountPct >= 0
+      ? `${d.discountPct}% below the eBay benchmark`
+      : `${Math.abs(d.discountPct)}% above the eBay benchmark`;
+    diffCell.appendChild(span);
+  } else {
+    diffCell.textContent = '—';
   }
-  if (d.watchName) meta.appendChild(el('span', null, `watch: ${d.watchName}`));
-  if (d.postedText) meta.appendChild(el('span', null, `listed ${d.postedText}`));
-  meta.appendChild(el('span', null, `found ${relTime(d.foundAt)}`));
+  row.appendChild(diffCell);
 
-  body.append(title, meta);
-  row.appendChild(body);
   return row;
 }
 
@@ -237,6 +259,7 @@ function renderDeals() {
   const box = $('dealList');
   box.replaceChildren();
   for (const d of list) box.appendChild(dealRow(d));
+  $('dealTable').classList.toggle('hidden', list.length === 0);
   const empty = $('dealsEmpty');
   empty.classList.toggle('hidden', list.length > 0);
   empty.textContent = deals.length
@@ -513,6 +536,7 @@ function applySettings(stored) {
   const s = { ...DEFAULT_WATCH_SETTINGS, ...(stored || {}) };
   $('periodMinutes').value = String(s.periodMinutes);
   $('notify').checked = !!s.notify;
+  $('deepScan').checked = s.deepScan !== false;
 }
 
 async function loadSettings() {
@@ -526,6 +550,7 @@ async function saveSettings() {
     cpcWatchSettings: {
       periodMinutes: isFinite(periodMinutes) ? periodMinutes : DEFAULT_WATCH_SETTINGS.periodMinutes,
       notify: $('notify').checked,
+      deepScan: $('deepScan').checked,
     },
   });
   $('settingsStatus').textContent = 'Saved';
@@ -601,6 +626,7 @@ $('setSearch').addEventListener('input', applySetSearch);
 
 $('periodMinutes').addEventListener('change', saveSettings);
 $('notify').addEventListener('change', saveSettings);
+$('deepScan').addEventListener('change', saveSettings);
 
 // Reloads the unpacked extension from disk (same as ↻ on chrome://extensions)
 // so a `git pull` takes effect without leaving this page. The page reloads

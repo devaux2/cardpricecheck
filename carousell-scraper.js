@@ -9,8 +9,11 @@
 
 (async () => {
   const KIND = 'carousell';
-  const DEADLINE_MS = 15000; // hydration wait budget
-  const MAX_LISTINGS = 60;
+  const DEADLINE_MS = 15000;      // hydration wait budget
+  const SCROLL_BUDGET_MS = 25000; // extra time to scroll-load more results
+  const MAX_LISTINGS = 200;
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // Relative-time text as Carousell renders it — English ("2 days ago") or
   // Chinese ("2日前" / "2天前"). Passed through raw, never parsed.
@@ -263,9 +266,19 @@
     return [...found.values()];
   }
 
+  // __NEXT_DATA__ holds page one; scroll-loaded items only ever appear in
+  // the DOM — union both, JSON first (it has richer fields).
+  function collect() {
+    const found = new Map();
+    for (const l of fromNextData()) if (!found.has(l.id)) found.set(l.id, l);
+    for (const l of fromDom()) if (!found.has(l.id)) found.set(l.id, l);
+    return [...found.values()].slice(0, MAX_LISTINGS);
+  }
+
   // ------------------------------------------------------------ main loop ----
 
   const deadline = Date.now() + DEADLINE_MS;
+  let listings = [];
   for (;;) {
     if (isBlocked()) {
       send({ blocked: true });
@@ -275,16 +288,26 @@
       send({ loginRequired: true });
       return;
     }
-    let listings = fromNextData();
-    if (!listings.length) listings = fromDom();
-    if (listings.length) {
-      send({ listings });
-      return;
-    }
+    listings = collect();
+    if (listings.length) break;
     if (Date.now() >= deadline) {
       send({ listings: [] }); // give up early so the background can move on
       return;
     }
-    await new Promise((r) => setTimeout(r, 500));
+    await sleep(500);
   }
+
+  // Deep phase: in a rendered (small unfocused window) worker, scrolling
+  // triggers Carousell's infinite scroll; in a hidden tab the count never
+  // grows and two stagnant rounds exit almost immediately.
+  const scrollDeadline = Date.now() + SCROLL_BUDGET_MS;
+  let stagnant = 0;
+  while (listings.length < MAX_LISTINGS && stagnant < 2 && Date.now() < scrollDeadline) {
+    window.scrollTo(0, document.documentElement.scrollHeight);
+    await sleep(1200);
+    const next = collect();
+    stagnant = next.length > listings.length ? 0 : stagnant + 1;
+    listings = next;
+  }
+  send({ listings });
 })();

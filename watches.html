@@ -48,7 +48,17 @@
       <p id="statusLine" class="status-line"></p>
       <div id="statusErrors"></div>
 
-      <div id="dealList"></div>
+      <table id="dealTable" class="hidden">
+        <thead>
+          <tr>
+            <th class="col-card">Card</th>
+            <th class="col-num">Listing</th>
+            <th class="col-num">Target</th>
+            <th class="col-num">Diff</th>
+          </tr>
+        </thead>
+        <tbody id="dealList"></tbody>
+      </table>
       <p id="dealsEmpty" class="empty hidden"></p>
     </section>
 
@@ -134,6 +144,8 @@
           </select>
         </label>
         <label><input type="checkbox" id="notify"> Desktop notification when new deals are found</label>
+        <label><input type="checkbox" id="deepScan"> Deep scan — open a small helper window during
+          checks so the full result list loads (hidden tabs only ever see page one)</label>
         <span id="settingsStatus"></span>
         <p class="hint">Checks run only while Chrome is open.</p>
         <div class="row">

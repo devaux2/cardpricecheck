@@ -14,8 +14,11 @@
 
 (async () => {
   const KIND = 'fbm';
-  const DEADLINE_MS = 20000; // hydration wait budget
-  const MAX_LISTINGS = 60;
+  const DEADLINE_MS = 20000;      // hydration wait budget
+  const SCROLL_BUDGET_MS = 25000; // extra time to scroll-load more results
+  const MAX_LISTINGS = 200;
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // "Free" listings have no money line; reported with priceText null.
   const FREE = /^(?:free|免費|免费)$/i;
@@ -214,9 +217,19 @@
     return [...found.values()];
   }
 
+  // The embedded payload holds page one; scroll-loaded items only ever
+  // appear in the DOM — union both, JSON first (it has richer fields).
+  function collect() {
+    const found = new Map();
+    for (const l of fromEmbeddedJson()) if (!found.has(l.id)) found.set(l.id, l);
+    for (const l of scrape()) if (!found.has(l.id)) found.set(l.id, l);
+    return [...found.values()].slice(0, MAX_LISTINGS);
+  }
+
   // ------------------------------------------------------------ main loop ----
 
   const deadline = Date.now() + DEADLINE_MS;
+  let listings = [];
   for (;;) {
     if (isBlocked()) {
       send({ blocked: true });
@@ -226,12 +239,8 @@
       send({ loginRequired: true });
       return;
     }
-    let listings = fromEmbeddedJson();
-    if (!listings.length) listings = scrape();
-    if (listings.length) {
-      send({ listings });
-      return;
-    }
+    listings = collect();
+    if (listings.length) break;
     // Login form with no marketplace content — results will never hydrate.
     if (showsLoginForm()) {
       send({ loginRequired: true });
@@ -241,6 +250,21 @@
       send({ listings: [] }); // give up early so the background can move on
       return;
     }
-    await new Promise((r) => setTimeout(r, 500));
+    await sleep(500);
   }
+
+  // Deep phase: in a rendered (small unfocused window) worker, scrolling
+  // triggers Facebook's infinite scroll and loads the full result set; in a
+  // hidden tab nothing renders, the count never grows, and two stagnant
+  // rounds exit almost immediately.
+  const scrollDeadline = Date.now() + SCROLL_BUDGET_MS;
+  let stagnant = 0;
+  while (listings.length < MAX_LISTINGS && stagnant < 2 && Date.now() < scrollDeadline) {
+    window.scrollTo(0, document.documentElement.scrollHeight);
+    await sleep(1200);
+    const next = collect();
+    stagnant = next.length > listings.length ? 0 : stagnant + 1;
+    listings = next;
+  }
+  send({ listings });
 })();

@@ -69,10 +69,13 @@ page). Each watch has:
 - **max price** (HK$) and **max listing age** (default: one week).
 
 Checks run on a schedule (default every 6 hours, configurable down to hourly
-or manual-only) and only while Chrome is open. Every listing is remembered
-once evaluated, so only *new* listings are flagged. New matches land in the
-**Deals** feed, fire a desktop notification, and show as a badge count on the
-toolbar icon.
+or manual-only) and only while Chrome is open. The **Deals** tab is a market
+board: each run reloads *all* current matches (deep scan opens a small
+unfocused helper window so infinite scroll can load the full result list, up
+to ~200 per query — hidden tabs only ever see page one) and shows them as a
+table — **Listing price | Target (eBay benchmark) | % Diff** — sorted best
+value first. Genuinely new listings fire a desktop notification and the
+toolbar badge; benchmark prices refresh daily.
 
 ### Facebook Marketplace caveats
 
