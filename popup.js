@@ -10,10 +10,11 @@ const DEFAULTS = {
   srcEb: false,
   game: 'Pokemon',
   eurRate: 0.85,
+  usdToHkd: 7.8,
 };
 
 const CHECKBOXES = ['enabled', 'srcJp', 'srcCm', 'srcEb'];
-const NUMBERS = ['threshold', 'maxListings', 'eurRate'];
+const NUMBERS = ['threshold', 'maxListings', 'eurRate', 'usdToHkd'];
 
 const status = document.getElementById('status');
 let statusTimer = null;

@@ -57,7 +57,8 @@
     },
     {
       "matches": ["https://www.carousell.com.hk/*"],
-      "js": ["money.js", "carousell-scraper.js"],
+      "js": ["money.js", "carousell-scraper.js", "marketplace-annotator.js"],
+      "css": ["content.css"],
       "run_at": "document_idle"
     },
     {
@@ -66,7 +67,8 @@
         "https://www.facebook.com/login*",
         "https://www.facebook.com/checkpoint*"
       ],
-      "js": ["money.js", "fbm-scraper.js"],
+      "js": ["money.js", "fbm-scraper.js", "marketplace-annotator.js"],
+      "css": ["content.css"],
       "run_at": "document_idle"
     }
   ]

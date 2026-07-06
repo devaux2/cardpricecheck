@@ -528,6 +528,10 @@ function tokenize(title) {
   return String(title)
     .replace(/new listing/gi, ' ')
     .normalize('NFKC')
+    // CJK titles glue scripts together ("リザードンPSA9日版"); split at
+    // CJK↔latin/digit boundaries so PSA grades and set codes become tokens
+    .replace(/([\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}])(?=[a-z0-9])/giu, '$1 ')
+    .replace(/([a-z0-9])(?=[\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}])/giu, '$1 ')
     // keep letters (incl. Japanese), digits, and /-.&' which appear in card
     // numbers ("123/165") and names; everything else (emoji, ★, …) → space
     .replace(/[^\p{L}\p{N}/\-.&' ]+/gu, ' ')
@@ -537,10 +541,20 @@ function tokenize(title) {
     .filter((t) => t && (t.length > 1 || !/^[a-z]$/i.test(t) || /^[vx]$/i.test(t)));
 }
 
+// Hong Kong marketplace vocabulary that Japan-located eBay sellers never put
+// in their titles — searching with it just produces zero matches.
+const EB_STOP_WORDS = new Set([
+  '寶可夢', '宝可梦', '寵物小精靈', '日版', '日本版', '港版', '中文版', '行貨',
+  '卡', '咭', '卡牌', '咭牌', 'hk', 'hkd',
+]);
+
 function buildEbayQuery(title) {
   // eBay handles long queries well; keep the title nearly intact so graded
   // cards compare against graded cards, Japanese against Japanese, etc.
-  return tokenize(title).slice(0, 12).join(' ');
+  return tokenize(title)
+    .filter((t) => !EB_STOP_WORDS.has(t.toLowerCase()))
+    .slice(0, 12)
+    .join(' ');
 }
 
 const GRADE_WORDS = new Set(['psa', 'bgs', 'cgc', 'ace', 'grade', 'graded', 'gem']);

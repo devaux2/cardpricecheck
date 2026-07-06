@@ -4,10 +4,13 @@ A Chrome extension for hunting graded Japanese card deals. Two engines, both
 running **entirely locally in your browser** — no server, no crawler, no
 third-party API:
 
-1. **On-page price comparison** — scans the eBay search page (or item page)
-   you are on, looks up what the same card costs from **Japan-located eBay
-   sellers** and on **Cardmarket**, and highlights listings selling at a
-   significant discount versus the cheapest alternative market.
+1. **On-page price comparison** — while you browse **Carousell HK** or
+   **Facebook Marketplace**, every listing gets a badge with the price of
+   the same card from **Japan-located eBay sellers** (converted to HK$ —
+   HKD is pegged to USD, so the fixed editable rate stays accurate), and
+   listings sitting well below that reference are highlighted green. The
+   same treatment works on eBay pages too (compared against JP eBay and
+   Cardmarket).
 2. **Watches** — saved searches for **Carousell HK** and **Facebook
    Marketplace** that run automatically every few hours (while Chrome is
    open), filter for what you collect — e.g. PSA 7/8/9 Japanese cards from
@@ -21,11 +24,15 @@ third-party API:
 3. Enable **Developer mode** (top right).
 4. Click **Load unpacked** and select this folder.
 
-## On-page comparison (eBay)
+## On-page comparison
 
-Browse an eBay search results page (ebay.co.uk, ebay.com, .de, .fr, .com.au,
-.ca) as normal. Under each listing a small badge appears per comparison
-source:
+Browse Carousell HK or Facebook Marketplace search results as normal — each
+listing gets a `JP eBay ~$12 ≈HK$94` badge (click it to open the actual eBay
+search and verify) and a verdict like **▼ 34% below JP eBay** with a green
+outline when it clears the threshold (default 20%).
+
+On eBay pages (ebay.co.uk, ebay.com, .de, .fr, .com.au, .ca) the same badges
+appear with more sources:
 
 - `JP eBay ~£8.40` — median of the cheapest Japan-located Buy-It-Now matches
   (click to open that search and verify).
@@ -107,6 +114,7 @@ selectors only, but expect occasional breakage.
 | --- | --- |
 | `manifest.json` | MV3 manifest |
 | `content.js` / `content.css` | eBay page scanner, badges, deal highlighting |
+| `marketplace-annotator.js` | Live badges/highlighting on Carousell HK and FBM pages |
 | `background.js` | Lookup queues, caching, worker-tab orchestration, watch scheduler |
 | `watch-filters.js` | Pure filtering logic (grades, Japanese heuristic, set matching) |
 | `sets.js` | Bundled Japanese Pokémon expansion list (codes, names, release dates) |
