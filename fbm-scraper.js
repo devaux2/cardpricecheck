@@ -69,6 +69,71 @@
     return !!(document.querySelector('input[name="email"]') && document.querySelector('input[name="pass"]'));
   }
 
+  // ---------------------------------------------- strategy 1: embedded JSON ----
+  // Facebook server-renders the first page of Marketplace results as Relay
+  // JSON inside <script> tags. Reading it needs no rendering at all — vital
+  // because Chrome barely renders hidden background tabs (throttled timers,
+  // no animation frames), so the visual feed in the worker tab often never
+  // loads. The DOM scrape below stays as a fallback for the visible case.
+
+  function fromEmbeddedJson() {
+    const found = new Map(); // id -> listing
+    for (const script of document.querySelectorAll('script')) {
+      const text = script.textContent;
+      if (!text || text.indexOf('marketplace_listing_title') === -1) continue;
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        continue; // a JS bundle that merely mentions the field name
+      }
+      walkForListings(data, found);
+      if (found.size >= MAX_LISTINGS) break;
+    }
+    return [...found.values()];
+  }
+
+  function walkForListings(node, found) {
+    if (!node || typeof node !== 'object' || found.size >= MAX_LISTINGS) return;
+    if (Array.isArray(node)) {
+      for (const v of node) walkForListings(v, found);
+      return;
+    }
+    const title = typeof node.marketplace_listing_title === 'string'
+      ? node.marketplace_listing_title
+      : null;
+    if (title && node.id != null && /^\d+$/.test(String(node.id))) {
+      const id = String(node.id);
+      if (!found.has(id)) {
+        const price = node.listing_price;
+        const photo = node.primary_listing_photo;
+        const image =
+          (photo && photo.image && typeof photo.image.uri === 'string' && photo.image.uri) ||
+          (photo && photo.listing_image && typeof photo.listing_image.uri === 'string' && photo.listing_image.uri) ||
+          null;
+        // creation_time is an epoch; rendered as relative text so the watch
+        // engine's normal age parsing applies.
+        let postedText = null;
+        const created = Number(node.creation_time);
+        if (isFinite(created) && created > 1e9) {
+          const days = Math.max(0, Math.floor((Date.now() / 1000 - created) / 86400));
+          postedText = days === 0 ? 'just now' : `${days} days ago`;
+        }
+        found.set(id, {
+          id,
+          title,
+          priceText: price && typeof price.formatted_amount === 'string'
+            ? price.formatted_amount
+            : null,
+          url: `https://www.facebook.com/marketplace/item/${id}/`,
+          image,
+          postedText,
+        });
+      }
+    }
+    for (const v of Object.values(node)) walkForListings(v, found);
+  }
+
   // -------------------------------------------------------------- scraping ----
 
   // A card line that is a price. Being short and parseable isn't enough:
@@ -161,7 +226,8 @@
       send({ loginRequired: true });
       return;
     }
-    const listings = scrape();
+    let listings = fromEmbeddedJson();
+    if (!listings.length) listings = scrape();
     if (listings.length) {
       send({ listings });
       return;

@@ -78,8 +78,11 @@ checks it through a hidden worker tab using *your* login. If the feed shows a
 "not logged in" error, log in to facebook.com in a normal tab and run the
 checks again. Facebook's terms frown on automated collection: keep the
 frequency modest (the default is gentle) and treat this as personal tooling.
-Facebook also changes its markup constantly; the scraper uses structural
-selectors only, but expect occasional breakage.
+Facebook also changes its markup constantly; the scraper reads the
+server-embedded search payload first (which also works in the hidden worker
+tab, where Chrome never renders the visual feed — the tab *looking*
+half-loaded is expected) and only falls back to the visible DOM. Expect
+occasional breakage anyway.
 
 ## How the lookups work
 
