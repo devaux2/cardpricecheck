@@ -19,7 +19,8 @@ function extractGrade(title) {
 function titleLooksJapanese(title) {
   const t = String(title);
   if (/中文版|chinese version/i.test(t)) return false;
-  return /japan(ese)?\b|\bjpn\b|\bjap\b|日本|日版|日文/i.test(t) || /[぀-ヿ]/.test(t);
+  // 旧裏 ("old back") only exists for Japanese cards, so it counts as a marker
+  return /japan(ese)?\b|\bjpn\b|\bjap\b|日本|日版|日文|旧裏|旧背/i.test(t) || /[぀-ヿ]/.test(t);
 }
 
 /**
@@ -81,10 +82,40 @@ function parsePostedDays(text) {
   return null;
 }
 
+// ------------------------------------------------------------------ eras ----
+// Broad age buckets so a watch can just say "vintage" instead of listing
+// sets: vintage = 1996–2003 (Original/Neo/e-Card), modern = 2016+ (SM
+// onwards), classic = everything between.
+
+const VINTAGE_ERAS = new Set(['Original', 'Neo', 'e-Card']);
+const MODERN_ERAS = new Set(['SM', 'Sword & Shield', 'Scarlet & Violet']);
+
+// Giveaway title markers, used only when no set could be identified.
+// 旧裏 ("old back") is the standard Japanese term for vintage cards;
+// mechanics like VMAX/GX and s/sm/sv set-code shapes only exist post-2016.
+const VINTAGE_MARKERS = /旧裏|旧背|マークなし|no[ -]?rarity|shadowless|wotc|vending|quick[ -]?starter/i;
+const MODERN_MARKERS = /\b(vmax|vstar|v[ -]?union|gx|sar|chr|csr|tag[ -]?team|full[ -]?art|alt[ -]?art|terastal)\b|(^|[^a-z0-9])(sv|sm|s)\d{1,2}[a-z]{0,2}($|[^a-z0-9])/i;
+
+function eraOfSet(setEntry) {
+  if (VINTAGE_ERAS.has(setEntry.era)) return 'vintage';
+  if (MODERN_ERAS.has(setEntry.era)) return 'modern';
+  return 'classic';
+}
+
+/** 'vintage' | 'classic' | 'modern' | null (unrecognisable). */
+function classifyEra(title, sets) {
+  const matched = matchSet(title, sets);
+  if (matched) return eraOfSet(matched);
+  const t = String(title);
+  if (VINTAGE_MARKERS.test(t)) return 'vintage';
+  if (MODERN_MARKERS.test(t)) return 'modern';
+  return null;
+}
+
 /**
  * Apply a watch's criteria to a scraped listing. Returns the extracted
- * metadata { grade, setCode, setName, price, currency } when the listing
- * matches, or null when it should be dropped.
+ * metadata { grade, setCode, setName, era, price, currency } when the
+ * listing matches, or null when it should be dropped.
  */
 function filterListing(watch, listing, sets) {
   const title = listing.title || '';
@@ -99,8 +130,16 @@ function filterListing(watch, listing, sets) {
   const money = listing.priceText ? parseMoney(listing.priceText) : null;
   if (watch.maxPrice && money && money.value > watch.maxPrice) return null;
 
-  const wantsSet = (watch.setCodes && watch.setCodes.length) || watch.releasedFrom || watch.releasedTo;
   const matched = matchSet(title, sets);
+  const era = matched ? eraOfSet(matched) : classifyEra(title, sets);
+
+  // Era mode filters by EXCLUSION: only identifiably wrong-era listings are
+  // dropped. Unrecognisable ones pass, because vintage sellers rarely name
+  // the set — a strict rule would eat exactly the listings being hunted.
+  const eraMode = watch.eraMode || 'any';
+  if (eraMode !== 'any' && era && era !== eraMode) return null;
+
+  const wantsSet = (watch.setCodes && watch.setCodes.length) || watch.releasedFrom || watch.releasedTo;
   if (wantsSet) {
     if (!matched) return null;
     if (watch.setCodes && watch.setCodes.length && !watch.setCodes.includes(matched.code)) return null;
@@ -113,6 +152,7 @@ function filterListing(watch, listing, sets) {
     grade,
     setCode: matched ? matched.code : null,
     setName: matched ? matched.name : null,
+    era,
     price: money ? money.value : null,
     currency: money ? money.symbol : null,
   };

@@ -33,6 +33,16 @@
         <select id="filterWatch" title="Filter by watch">
           <option value="">All watches</option>
         </select>
+        <select id="filterEra" title="Filter by era">
+          <option value="">All eras</option>
+          <option value="vintage">Vintage</option>
+          <option value="classic">Classic</option>
+          <option value="modern">Modern</option>
+        </select>
+        <select id="sortDeals" title="Sort deals">
+          <option value="value">Best value first</option>
+          <option value="newest">Newest first</option>
+        </select>
       </div>
 
       <p id="statusLine" class="status-line"></p>
@@ -70,6 +80,19 @@
         </fieldset>
 
         <label><input type="checkbox" id="wJapaneseOnly" checked> Japanese cards only</label>
+
+        <fieldset>
+          <legend>Era</legend>
+          <div class="seg" id="eraSeg">
+            <label><input type="radio" name="wEra" value="any" checked><span>Any</span></label>
+            <label><input type="radio" name="wEra" value="vintage"><span>Vintage ’96–’03</span></label>
+            <label><input type="radio" name="wEra" value="classic"><span>Classic ’03–’16</span></label>
+            <label><input type="radio" name="wEra" value="modern"><span>Modern ’16+</span></label>
+          </div>
+          <p class="hint">Filters by exclusion: only listings identifiable as the
+            wrong era (set code/name, or markers like VMAX/GX vs 旧裏/shadowless)
+            are dropped — unrecognisable ones are kept.</p>
+        </fieldset>
 
         <fieldset>
           <legend>Sets</legend>

@@ -13,9 +13,12 @@ third-party API:
    Cardmarket).
 2. **Watches** — saved searches for **Carousell HK** and **Facebook
    Marketplace** that run automatically every few hours (while Chrome is
-   open), filter for what you collect — e.g. PSA 7/8/9 Japanese cards from
-   specific sets or release years — and flag every *new* matching listing in
-   a deals feed with a desktop notification and a badge count.
+   open). Out of the box it hunts **vintage Japanese PSA cards** (two
+   preconfigured watches — "pokemon psa" and 旧裏), prices every new find
+   against the cheaper of Japan-located / worldwide eBay, and lists deals
+   **best value first** ("▼ 38% vs market") with a desktop notification and
+   badge count. Era quick-filter (Vintage / Classic / Modern), PSA grades,
+   set/release-date filters and max price are all adjustable per watch.
 
 ## Install
 

@@ -16,6 +16,7 @@ const SETS = typeof CPC_JP_SETS !== 'undefined' ? CPC_JP_SETS : [];
 const DEFAULT_WATCH_SETTINGS = { periodMinutes: 360, notify: true };
 const DEFAULT_GRADES = [7, 8, 9];
 const PLATFORM_LABELS = { carousell: 'Carousell', fbm: 'FB Marketplace' };
+const ERA_LABELS = { vintage: 'Vintage', classic: 'Classic', modern: 'Modern' };
 const EMPTY_STATUS = { lastRun: null, running: false, platforms: {} };
 
 const $ = (id) => document.getElementById(id);
@@ -193,6 +194,22 @@ function dealRow(d) {
     if (d.setName) chip.title = d.setName;
     meta.appendChild(chip);
   }
+  if (d.era && ERA_LABELS[d.era]) meta.appendChild(el('span', 'chip', ERA_LABELS[d.era]));
+  if (d.refUsd != null) {
+    const market = el('a', 'deal-market',
+      `market ~$${d.refUsd.toFixed(0)}${d.refHkd ? ` ≈HK$${d.refHkd.toFixed(0)}` : ''}`);
+    if (isHttp(d.refUrl)) market.href = d.refUrl;
+    market.target = '_blank';
+    market.rel = 'noopener';
+    market.title = 'Cheapest eBay reference (JP-located or worldwide) — click to verify';
+    meta.appendChild(market);
+  }
+  if (d.discountPct != null) {
+    const good = d.discountPct >= 15;
+    const chip = el('span', good ? 'chip chip-discount' : 'chip',
+      d.discountPct >= 0 ? `▼ ${d.discountPct}% vs market` : `▲ ${Math.abs(d.discountPct)}% over`);
+    meta.appendChild(chip);
+  }
   if (d.watchName) meta.appendChild(el('span', null, `watch: ${d.watchName}`));
   if (d.postedText) meta.appendChild(el('span', null, `listed ${d.postedText}`));
   meta.appendChild(el('span', null, `found ${relTime(d.foundAt)}`));
@@ -205,8 +222,18 @@ function dealRow(d) {
 function renderDeals() {
   const platform = $('filterPlatform').value;
   const watchId = $('filterWatch').value;
+  const era = $('filterEra').value;
   const list = deals.filter((d) =>
-    (!platform || d.platform === platform) && (!watchId || d.watchId === watchId));
+    (!platform || d.platform === platform)
+    && (!watchId || d.watchId === watchId)
+    && (!era || d.era === era));
+  if ($('sortDeals').value === 'newest') {
+    list.sort((a, b) => b.foundAt - a.foundAt);
+  } else {
+    // best value first; unranked deals (no market reference) sink to the end
+    const rank = (d) => (d.discountPct == null ? -Infinity : d.discountPct);
+    list.sort((a, b) => rank(b) - rank(a) || b.foundAt - a.foundAt);
+  }
   const box = $('dealList');
   box.replaceChildren();
   for (const d of list) box.appendChild(dealRow(d));
@@ -238,6 +265,7 @@ function watchChips(w) {
   add(platforms.length ? platforms.join(' + ') : 'no platforms');
   add(gradeSummary(w.grades), w.grades && w.grades.length ? 'chip-grade' : null);
   if (w.japaneseOnly) add('JP only');
+  if (w.eraMode && w.eraMode !== 'any') add(ERA_LABELS[w.eraMode] || w.eraMode);
   const codes = w.setCodes || [];
   if (codes.length) add(codes.length <= 3 ? codes.join(', ') : `${codes.length} sets`, 'chip-set');
   if (w.releasedFrom && w.releasedTo) add(`${w.releasedFrom} → ${w.releasedTo}`);
@@ -411,6 +439,10 @@ function fillForm(w) {
     cb.disabled = grades.length === 0;
   }
   $('wJapaneseOnly').checked = w ? !!w.japaneseOnly : true;
+  const eraMode = (w && w.eraMode) || 'any';
+  for (const radio of document.querySelectorAll('input[name="wEra"]')) {
+    radio.checked = radio.value === eraMode;
+  }
   selectedSets = new Set(w ? (w.setCodes || []) : []);
   syncSetCheckboxes();
   renderSetChips();
@@ -458,6 +490,7 @@ async function saveWatch(e) {
     platforms: { carousell: $('wPlatCarousell').checked, fbm: $('wPlatFbm').checked },
     grades,
     japaneseOnly: $('wJapaneseOnly').checked,
+    eraMode: (document.querySelector('input[name="wEra"]:checked') || {}).value || 'any',
     setCodes: [...selectedSets],
     releasedFrom: $('wFrom').value || null,
     releasedTo: $('wTo').value || null,
@@ -558,6 +591,8 @@ $('clearDeals').addEventListener('click', async () => {
 
 $('filterPlatform').addEventListener('change', renderDeals);
 $('filterWatch').addEventListener('change', renderDeals);
+$('filterEra').addEventListener('change', renderDeals);
+$('sortDeals').addEventListener('change', renderDeals);
 
 $('watchForm').addEventListener('submit', saveWatch);
 $('cancelEdit').addEventListener('click', resetForm);

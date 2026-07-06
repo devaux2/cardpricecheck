@@ -252,3 +252,45 @@ form label, fieldset label { display: block; margin: 6px 0; }
 .hint { color: #777; font-size: 11px; margin: 8px 0 0; }
 .hint-inline { color: #777; font-size: 11px; }
 #settingsStatus { color: #15803d; font-size: 12px; }
+
+/* ------------------------------------------------------ era segmented ---- */
+
+.seg {
+  display: inline-flex;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.seg label { margin: 0; }
+
+.seg input { display: none; }
+
+.seg span {
+  display: inline-block;
+  padding: 4px 12px;
+  cursor: pointer;
+  border-right: 1px solid #ccc;
+  user-select: none;
+}
+
+.seg label:last-child span { border-right: none; }
+
+.seg span:hover { background: #f5f5f5; }
+
+.seg input:checked + span {
+  background: #16a34a;
+  color: #fff;
+}
+
+.chip-discount {
+  background: #16a34a;
+  border-color: #16a34a;
+  color: #fff;
+  font-weight: 600;
+}
+
+.deal-market {
+  color: #444;
+  text-decoration: underline dotted;
+}

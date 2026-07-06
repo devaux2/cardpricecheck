@@ -309,7 +309,32 @@ async function runCmJob(msg) {
 
 let watchRunning = false;
 
-chrome.runtime.onInstalled.addListener(() => { setupWatchAlarm(); updateBadge(); sweepExpiredCache(); });
+// Out-of-the-box watches: the whole point of the extension is "find vintage
+// Japanese PSA cards", so that hunt is preconfigured. Grades 1–10 means
+// "must be PSA-graded, any grade" (an empty list would also accept raws).
+const ALL_GRADES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+const DEFAULT_WATCHES = [
+  {
+    id: 'w-default-vintage', name: 'Vintage JP PSA (auto)', query: 'pokemon psa',
+    platforms: { carousell: true, fbm: true }, grades: ALL_GRADES,
+    japaneseOnly: true, eraMode: 'vintage', setCodes: [],
+    releasedFrom: null, releasedTo: null, maxPrice: null, maxAgeDays: 7, enabled: true,
+  },
+  {
+    id: 'w-default-kyuura', name: '旧裏 old-back (auto)', query: '旧裏',
+    platforms: { carousell: true, fbm: true }, grades: ALL_GRADES,
+    japaneseOnly: true, eraMode: 'vintage', setCodes: [],
+    releasedFrom: null, releasedTo: null, maxPrice: null, maxAgeDays: 7, enabled: true,
+  },
+];
+
+async function seedDefaultWatches() {
+  const { cpcWatches } = await chrome.storage.local.get('cpcWatches');
+  if (cpcWatches && cpcWatches.length) return; // never touch user-managed watches
+  await chrome.storage.local.set({ cpcWatches: DEFAULT_WATCHES });
+}
+
+chrome.runtime.onInstalled.addListener(() => { seedDefaultWatches(); setupWatchAlarm(); updateBadge(); sweepExpiredCache(); });
 chrome.runtime.onStartup.addListener(() => { setupWatchAlarm(); updateBadge(); sweepExpiredCache(); });
 
 // Runs on every service-worker wake: a fresh worker means no run is actually
@@ -405,6 +430,13 @@ async function runAllWatches() {
       }
     }
     if (added.length) {
+      // Rank every new deal against the market before recording it, so the
+      // feed can sort by "% below market". Lookups go through the normal
+      // cached, rate-limited eBay queues.
+      const { usdToHkd } = await chrome.storage.sync.get({ usdToHkd: 7.8 });
+      for (const deal of added) {
+        try { await priceReference(deal, usdToHkd); } catch { /* deal stays unranked */ }
+      }
       await recordDeals(added);
       await notifyDeals(added.length);
     }
@@ -447,6 +479,7 @@ async function processListings(watch, platform, listings, sets) {
       grade: meta.grade,
       setCode: meta.setCode,
       setName: meta.setName,
+      era: meta.era,
       foundAt: Date.now(),
       seen: false,
     });
@@ -459,6 +492,26 @@ async function processListings(watch, platform, listings, sets) {
   }
   await chrome.storage.local.set({ [seenKey]: seen });
   return fresh;
+}
+
+// Attach the market reference to a deal: the cheaper of the Japan-located
+// and worldwide eBay medians (both USD on ebay.com), converted to HK$ via
+// the peg rate, plus the discount of the listing against it.
+async function priceReference(deal, usdToHkd) {
+  const [jp, eb] = await Promise.all([
+    handleCheck({ source: 'jp', query: deal.title, domain: 'www.ebay.com' }),
+    handleCheck({ source: 'eb', query: deal.title, domain: 'www.ebay.com' }),
+  ]);
+  const refs = [jp, eb].filter((r) => r && r.ok && r.count && r.median > 0 && r.currency === '$');
+  if (!refs.length) return;
+  const best = refs.reduce((a, b) => (a.median <= b.median ? a : b));
+  deal.refUsd = best.median;
+  deal.refHkd = best.median * usdToHkd;
+  deal.refUrl = best.url;
+  // Carousell shows HK$; FBM in Hong Kong renders plain "$" but means HK$.
+  if (deal.price && (deal.currency === 'HK$' || deal.currency === '$') && deal.refHkd > 0) {
+    deal.discountPct = Math.round((1 - deal.price / deal.refHkd) * 100);
+  }
 }
 
 // Serialise every read-modify-write of cpcDeals so a scheduled run's
