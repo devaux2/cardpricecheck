@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body {
+    width: 300px;
+    margin: 0;
+    padding: 12px 14px;
+    font: 13px/1.5 -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    color: #222;
+  }
+  h1 { font-size: 15px; margin: 0 0 10px; }
+  label { display: block; margin: 6px 0; }
+  fieldset {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    margin: 10px 0;
+    padding: 6px 10px 8px;
+  }
+  legend { font-weight: 600; padding: 0 4px; }
+  input[type="number"] { width: 64px; }
+  select { max-width: 160px; }
+  .row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  button {
+    padding: 4px 10px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    background: #f5f5f5;
+    cursor: pointer;
+  }
+  button:hover { background: #eee; }
+  #status { color: #15803d; font-size: 12px; }
+  .hint { color: #777; font-size: 11px; margin: 10px 0 0; }
+</style>
+</head>
+<body>
+  <h1>Card Price Check</h1>
+
+  <label><input type="checkbox" id="enabled"> Enabled</label>
+
+  <fieldset>
+    <legend>Compare against</legend>
+    <label><input type="checkbox" id="srcJp"> eBay — items located in Japan</label>
+    <label><input type="checkbox" id="srcCm"> Cardmarket (hidden worker tab)</label>
+    <label><input type="checkbox" id="srcEb"> eBay — all locations</label>
+  </fieldset>
+
+  <label>Highlight deals at least <input type="number" id="threshold" min="5" max="90" step="1"> % cheaper</label>
+
+  <label>Cardmarket game
+    <select id="game">
+      <option value="Pokemon">Pokémon</option>
+      <option value="Magic">Magic: The Gathering</option>
+      <option value="YuGiOh">Yu-Gi-Oh!</option>
+      <option value="OnePiece">One Piece</option>
+      <option value="Lorcana">Disney Lorcana</option>
+      <option value="Digimon">Digimon</option>
+      <option value="FleshAndBlood">Flesh and Blood</option>
+      <option value="StarWarsUnlimited">Star Wars Unlimited</option>
+    </select>
+  </label>
+
+  <label>EUR → your currency rate <input type="number" id="eurRate" min="0" step="0.01"></label>
+
+  <label>Max listings checked per page <input type="number" id="maxListings" min="1" max="200" step="1"></label>
+
+  <div class="row">
+    <button id="clear">Clear cached prices</button>
+    <span id="status"></span>
+  </div>
+
+  <p class="hint">Changes apply when you reload the eBay page. Lookups run only while you browse, are rate-limited, and are cached for 6 hours.</p>
+
+  <script src="popup.js"></script>
+</body>
+</html>

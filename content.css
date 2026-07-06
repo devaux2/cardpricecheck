@@ -1,0 +1,102 @@
+.cpc-badge {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 4px;
+  font: 12px/1.4 -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+.cpc-badge--column {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.cpc-slot {
+  color: #444;
+  text-decoration: none;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  padding: 1px 8px;
+  background: #fafafa;
+  white-space: nowrap;
+}
+
+.cpc-slot:hover {
+  border-color: #999;
+  text-decoration: none;
+}
+
+.cpc-pending {
+  opacity: 0.55;
+  font-style: italic;
+}
+
+.cpc-error {
+  color: #b91c1c;
+}
+
+.cpc-none {
+  color: #888;
+}
+
+.cpc-verdict {
+  font-weight: 700;
+  color: #555;
+  white-space: nowrap;
+}
+
+.cpc-verdict--deal {
+  color: #15803d;
+}
+
+.cpc-verdict--over {
+  color: #b91c1c;
+}
+
+.cpc-deal {
+  outline: 3px solid #16a34a;
+  outline-offset: -2px;
+  border-radius: 8px;
+  background: rgba(22, 163, 74, 0.05);
+}
+
+.cpc-panel {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483647;
+  width: 320px;
+  background: #fff;
+  color: #222;
+  border: 1px solid #ddd;
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+  padding: 12px 14px;
+  font: 13px/1.5 -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+.cpc-panel.cpc-deal {
+  outline-offset: 0;
+}
+
+.cpc-panel-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.cpc-close {
+  cursor: pointer;
+  border: none;
+  background: none;
+  font-size: 14px;
+  color: #888;
+  padding: 0 2px;
+}
+
+.cpc-close:hover {
+  color: #222;
+}

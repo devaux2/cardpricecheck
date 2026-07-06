@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "Card Price Check",
+  "version": "0.1.0",
+  "description": "Highlights eBay card listings that are significantly cheaper than the same card from Japan-located eBay sellers or on Cardmarket. Runs entirely in your browser.",
+  "permissions": ["storage", "offscreen"],
+  "host_permissions": [
+    "https://www.ebay.com/*",
+    "https://www.ebay.co.uk/*",
+    "https://www.ebay.de/*",
+    "https://www.ebay.fr/*",
+    "https://www.ebay.com.au/*",
+    "https://www.ebay.ca/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Card Price Check settings"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.ebay.com/sch/*",
+        "https://www.ebay.com/itm/*",
+        "https://www.ebay.co.uk/sch/*",
+        "https://www.ebay.co.uk/itm/*",
+        "https://www.ebay.de/sch/*",
+        "https://www.ebay.de/itm/*",
+        "https://www.ebay.fr/sch/*",
+        "https://www.ebay.fr/itm/*",
+        "https://www.ebay.com.au/sch/*",
+        "https://www.ebay.com.au/itm/*",
+        "https://www.ebay.ca/sch/*",
+        "https://www.ebay.ca/itm/*"
+      ],
+      "js": ["money.js", "content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.cardmarket.com/*"],
+      "js": ["money.js", "cm-scraper.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
