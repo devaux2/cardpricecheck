@@ -54,17 +54,20 @@ function matchSet(title, sets) {
 function parsePostedDays(text) {
   if (!text) return null;
   const t = String(text);
-  const en = t.match(/(\d+)\s*(second|sec|minute|min|hour|hr|day|week|month)/i);
+  if (/just now/i.test(t)) return 0;
+  // "2 days ago" but also "a day ago" / "an hour ago" as Carousell writes it
+  const en = t.match(/(\d+|an?)\s*(second|sec|minute|min|hour|hr|day|week|month|year|yr)/i);
   if (en) {
-    const n = parseInt(en[1], 10);
+    const n = /^\d/.test(en[1]) ? parseInt(en[1], 10) : 1;
     const u = en[2].toLowerCase();
     if (u.startsWith('sec') || u.startsWith('min')) return 0;
     if (u.startsWith('h')) return n / 24;
     if (u.startsWith('d')) return n;
     if (u.startsWith('w')) return n * 7;
-    return n * 30;
+    if (u.startsWith('mo')) return n * 30;
+    return n * 365; // year/yr
   }
-  const zh = t.match(/(\d+)\s*(秒|分鐘|分钟|小時|小时|日|天|星期|週|周|個月|个月)/);
+  const zh = t.match(/(\d+)\s*(秒|分鐘|分钟|小時|小时|日|天|星期|週|周|個月|个月|月|年)/);
   if (zh) {
     const n = parseInt(zh[1], 10);
     const u = zh[2];
@@ -72,7 +75,8 @@ function parsePostedDays(text) {
     if (u.startsWith('小')) return n / 24;
     if (u === '日' || u === '天') return n;
     if (u === '星期' || u === '週' || u === '周') return n * 7;
-    return n * 30;
+    if (u === '年') return n * 365;
+    return n * 30; // 個月 / 个月 / 月
   }
   return null;
 }
@@ -122,11 +126,18 @@ function buildWatchQuery(watch) {
 }
 
 /** Platform search URL, newest-first where the platform supports it. */
-function watchSearchUrl(platform, query) {
+function watchSearchUrl(platform, query, maxAgeDays) {
   if (platform === 'carousell') {
     return `https://www.carousell.com.hk/search/${encodeURIComponent(query)}`
       + '?addRecent=false&canChangeKeyword=false&includeSuggestions=false&sort_by=3';
   }
-  return `https://www.facebook.com/marketplace/search/?query=${encodeURIComponent(query)}`
-    + '&daysSinceListed=7&sortBy=creation_time_descend&exact=false';
+  let url = `https://www.facebook.com/marketplace/search/?query=${encodeURIComponent(query)}`
+    + '&sortBy=creation_time_descend&exact=false';
+  // Marketplace only supports 1/7/30-day buckets; use the smallest one that
+  // covers the watch's max age, and no filter at all for "any age" (0) or
+  // ranges beyond a month. The precise cut still happens client-side where
+  // the listing shows its age.
+  const age = maxAgeDays == null ? 7 : maxAgeDays;
+  if (age > 0 && age <= 30) url += `&daysSinceListed=${age <= 1 ? 1 : age <= 7 ? 7 : 30}`;
+  return url;
 }

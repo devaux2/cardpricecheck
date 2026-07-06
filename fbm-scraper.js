@@ -71,10 +71,16 @@
 
   // -------------------------------------------------------------- scraping ----
 
-  // A card line that is a price — money-only lines are short; long lines that
-  // merely contain an amount are more likely titles ("2 boxes $100 each").
+  // A card line that is a price. Being short and parseable isn't enough:
+  // titles like "PSA10 Charizard $3000" fit in 25 chars and contain money.
+  // A real price line is money and nothing else — strip currency markers,
+  // digits and separators and almost no letters should remain.
   function isPriceLine(t) {
-    return t.length <= 25 && !!parseMoney(t);
+    if (t.length > 25 || !parseMoney(t)) return false;
+    const rest = t
+      .replace(/US\s?\$|HK\s?\$|AU\s?\$|C\s?\$|NZ\s?\$|NT\s?\$|S\s?\$|EUR|JPY|HKD|£|\$|€|¥/gi, '')
+      .replace(/[\d.,\s]/g, '');
+    return rest.length <= 2;
   }
 
   /**

@@ -26,7 +26,10 @@ const SOURCE_GAP_MS = { jp: 1500, eb: 1500, cm: 4000 };
 const WORKER_LANE_GAP_MS = 1000;
 const CM_JOB_TIMEOUT_MS = 30 * 1000;
 const WATCH_JOB_TIMEOUT_MS = 45 * 1000;
-const WORKER_TAB_IDLE_CLOSE_MS = 45 * 1000;
+// Must stay comfortably below the ~30s MV3 idle timeout: the keepalive runs
+// while the worker tab is open, so the close timer must fire before the
+// service worker is allowed to die, or the hidden tab would leak.
+const WORKER_TAB_IDLE_CLOSE_MS = 15 * 1000;
 const SAMPLE_SIZE = 12; // price stats use the cheapest N matches
 
 const WATCH_ALARM = 'cpcWatchAlarm';
@@ -59,7 +62,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
   if (msg.type === 'cpc-worker-poll') {
-    const isWorker = workerActive && sender.tab && sender.tab.id === workerTabId;
+    let isWorker = workerActive && sender.tab && sender.tab.id === workerTabId;
+    // A slow page from a previous, timed-out job can still poll after the
+    // lane has moved on. Its URL still carries the old cpcw=<jobId> param,
+    // so refuse to hand the *current* job's id to a stale document.
+    if (isWorker && sender.url) {
+      try {
+        const cpcw = new URL(sender.url).searchParams.get('cpcw');
+        if (cpcw && cpcw !== workerActive.jobId) isWorker = false;
+      } catch { /* unparsable sender url — treat as current */ }
+    }
     sendResponse(isWorker ? { jobId: workerActive.jobId, kind: workerActive.kind } : { jobId: null });
     return;
   }
@@ -231,11 +243,15 @@ async function openWorkerTab(url) {
   }
   const tab = await chrome.tabs.create({ url, active: false });
   workerTabId = tab.id;
+  // Remembered across service-worker restarts so a tab orphaned by a crash
+  // or extension reload can be cleaned up on the next wake.
+  try { await chrome.storage.session.set({ cpcWorkerTabId: tab.id }); } catch { /* best effort */ }
 }
 
 function onScrapeResult(sender, msg) {
   if (!workerActive || !sender.tab || sender.tab.id !== workerTabId) return;
   if (msg.jobId !== workerActive.jobId) return; // stale result from a timed-out job
+  if (msg.kind !== workerActive.kind) return;   // stale page answering another platform's job
   finishWorker({ ok: true, ...msg });
 }
 
@@ -243,8 +259,13 @@ function scheduleWorkerClose() {
   clearTimeout(workerIdleTimer);
   workerIdleTimer = setTimeout(async () => {
     if (workerActive || workerTabId === null) return;
-    try { await chrome.tabs.remove(workerTabId); } catch { /* already gone */ }
+    // Null the id before the await: a job arriving mid-remove must open a
+    // fresh tab rather than tabs.update() one that is being torn down.
+    const closing = workerTabId;
     workerTabId = null;
+    updateKeepalive(); // tab gone — let the service worker wind down
+    try { await chrome.tabs.remove(closing); } catch { /* already gone */ }
+    try { await chrome.storage.session.remove('cpcWorkerTabId'); } catch { /* best effort */ }
   }, WORKER_TAB_IDLE_CLOSE_MS);
 }
 
@@ -252,6 +273,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabId !== workerTabId) return;
   workerTabId = null;
   finishWorker({ ok: false, error: 'worker tab was closed' });
+  updateKeepalive(); // finishWorker no-ops when no job was active
 });
 
 // ---------------------------------------------------------- Cardmarket ----
@@ -287,8 +309,26 @@ async function runCmJob(msg) {
 
 let watchRunning = false;
 
-chrome.runtime.onInstalled.addListener(() => { setupWatchAlarm(); updateBadge(); });
-chrome.runtime.onStartup.addListener(() => { setupWatchAlarm(); updateBadge(); });
+chrome.runtime.onInstalled.addListener(() => { setupWatchAlarm(); updateBadge(); sweepExpiredCache(); });
+chrome.runtime.onStartup.addListener(() => { setupWatchAlarm(); updateBadge(); sweepExpiredCache(); });
+
+// Runs on every service-worker wake: a fresh worker means no run is actually
+// in progress, so a persisted running:true is stale (Chrome quit or the SW
+// died mid-run) and would lock out "Run checks now" forever. Same for a
+// worker tab orphaned by a crash — close it if it still exists.
+(async function recoverFromInterruptedRun() {
+  try {
+    const { cpcWatchStatus } = await chrome.storage.local.get('cpcWatchStatus');
+    if (cpcWatchStatus && cpcWatchStatus.running && !watchRunning) {
+      await chrome.storage.local.set({ cpcWatchStatus: { ...cpcWatchStatus, running: false } });
+    }
+    const { cpcWorkerTabId } = await chrome.storage.session.get('cpcWorkerTabId');
+    if (cpcWorkerTabId != null && cpcWorkerTabId !== workerTabId) {
+      try { await chrome.tabs.remove(cpcWorkerTabId); } catch { /* already gone */ }
+      await chrome.storage.session.remove('cpcWorkerTabId');
+    }
+  } catch { /* recovery is best-effort */ }
+})();
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'sync' && changes.cpcWatchSettings) setupWatchAlarm();
@@ -326,10 +366,10 @@ async function runAllWatches() {
   watchRunning = true;
   updateKeepalive();
   const status = { lastRun: Date.now(), running: true, platforms: {} };
-  await chrome.storage.local.set({ cpcWatchStatus: status });
   const added = [];
   const platformDead = {}; // stop hammering a platform that failed this run
   try {
+    await chrome.storage.local.set({ cpcWatchStatus: status });
     const { cpcWatches = [] } = await chrome.storage.local.get('cpcWatches');
     const sets = typeof CPC_JP_SETS !== 'undefined' ? CPC_JP_SETS : [];
     for (const watch of cpcWatches) {
@@ -337,7 +377,7 @@ async function runAllWatches() {
       for (const platform of ['carousell', 'fbm']) {
         if (!watch.platforms || !watch.platforms[platform]) continue;
         if (platformDead[platform]) continue;
-        const url = watchSearchUrl(platform, buildWatchQuery(watch));
+        const url = watchSearchUrl(platform, buildWatchQuery(watch), watch.maxAgeDays);
         let r;
         try {
           r = await scrapeViaWorkerTab(url, platform, WATCH_JOB_TIMEOUT_MS);
@@ -349,7 +389,8 @@ async function runAllWatches() {
           stamp.error = r.error || 'lookup failed';
           platformDead[platform] = true;
         } else if (r.loginRequired) {
-          stamp.error = 'Not logged in — open facebook.com in a normal tab, log in, then run again';
+          const site = platform === 'fbm' ? 'facebook.com' : 'carousell.com.hk';
+          stamp.error = `Not logged in — open ${site} in a normal tab, log in, then run again`;
           platformDead[platform] = true;
         } else if (r.blocked) {
           stamp.error = 'Blocked / bot check shown — open the site in a normal tab, then run again';
@@ -420,11 +461,23 @@ async function processListings(watch, platform, listings, sets) {
   return fresh;
 }
 
-async function recordDeals(fresh) {
-  const { cpcDeals = [] } = await chrome.storage.local.get('cpcDeals');
-  const existing = new Set(cpcDeals.map((d) => d.id));
-  const merged = [...fresh.filter((d) => !existing.has(d.id)), ...cpcDeals].slice(0, DEALS_CAP);
-  await chrome.storage.local.set({ cpcDeals: merged });
+// Serialise every read-modify-write of cpcDeals so a scheduled run's
+// recordDeals can't interleave with markDealsSeen and clobber fresh deals.
+let dealsLock = Promise.resolve();
+
+function withDealsLock(fn) {
+  const p = dealsLock.then(fn);
+  dealsLock = p.catch(() => {});
+  return p;
+}
+
+function recordDeals(fresh) {
+  return withDealsLock(async () => {
+    const { cpcDeals = [] } = await chrome.storage.local.get('cpcDeals');
+    const existing = new Set(cpcDeals.map((d) => d.id));
+    const merged = [...fresh.filter((d) => !existing.has(d.id)), ...cpcDeals].slice(0, DEALS_CAP);
+    await chrome.storage.local.set({ cpcDeals: merged });
+  });
 }
 
 async function notifyDeals(count) {
@@ -440,8 +493,10 @@ async function notifyDeals(count) {
 }
 
 async function markDealsSeen() {
-  const { cpcDeals = [] } = await chrome.storage.local.get('cpcDeals');
-  await chrome.storage.local.set({ cpcDeals: cpcDeals.map((d) => ({ ...d, seen: true })) });
+  await withDealsLock(async () => {
+    const { cpcDeals = [] } = await chrome.storage.local.get('cpcDeals');
+    await chrome.storage.local.set({ cpcDeals: cpcDeals.map((d) => ({ ...d, seen: true })) });
+  });
   await updateBadge();
 }
 
@@ -547,6 +602,18 @@ async function clearPriceCache() {
   if (keys.length) await chrome.storage.local.remove(keys);
 }
 
+// Expired cache entries are dead weight (cacheGet ignores them); sweep them
+// on startup so storage.local doesn't creep toward its quota over months.
+async function sweepExpiredCache() {
+  try {
+    const all = await chrome.storage.local.get(null);
+    const now = Date.now();
+    const stale = Object.keys(all).filter((k) =>
+      k.startsWith('cpc|') && !(all[k] && now - all[k].t < CACHE_TTL_MS));
+    if (stale.length) await chrome.storage.local.remove(stale);
+  } catch { /* sweep is best-effort */ }
+}
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -556,9 +623,12 @@ function sleep(ms) {
 let keepalive = null;
 
 function updateKeepalive() {
+  // An open worker tab counts as busy: the service worker must outlive the
+  // idle-close timer, or the hidden tab would leak when the SW dies first.
   const busy = Object.values(queues).some((q) => q.length)
     || Object.values(pumping).some(Boolean)
     || !!workerActive
+    || workerTabId !== null
     || watchRunning;
   if (busy && !keepalive) {
     keepalive = setInterval(() => chrome.runtime.getPlatformInfo(() => {}), 25 * 1000);
